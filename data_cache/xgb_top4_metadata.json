@@ -1,0 +1,35 @@
+{
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "SPY",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "TSLA",
+    "NVDA",
+    "JPM",
+    "JNJ"
+  ],
+  "feature_columns": [
+    "macd",
+    "rsi_30",
+    "cci_30",
+    "dx_30",
+    "close_30_sma",
+    "close_60_sma",
+    "volatility_30",
+    "return_5",
+    "return_10",
+    "price_vs_sma30",
+    "spy_trend"
+  ],
+  "top_k": 4,
+  "target_horizon": 30,
+  "train_end_date": "2022-01-01",
+  "test_start_date": "2022-01-01",
+  "train_rebalance_dates": 18,
+  "test_rebalance_dates": 51,
+  "train_basket_rows": 72,
+  "test_basket_rows": 204
+}

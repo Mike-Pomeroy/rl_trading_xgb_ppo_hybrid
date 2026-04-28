@@ -1,0 +1,22 @@
+{
+  "last_rebalance_month": "2026-04",
+  "last_rebalance_time": "2026-04-25T22:50:42.296504-04:00",
+  "last_selected": [
+    "AMZN",
+    "GOOGL",
+    "NVDA",
+    "SPY"
+  ],
+  "last_weights": {
+    "AAPL": 0.0,
+    "MSFT": 0.0,
+    "SPY": 0.2125,
+    "GOOGL": 0.2125,
+    "AMZN": 0.2125,
+    "META": 0.0,
+    "TSLA": 0.0,
+    "NVDA": 0.2125,
+    "JPM": 0.0,
+    "JNJ": 0.0
+  }
+}
