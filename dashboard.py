@@ -18,6 +18,11 @@ IMPORTANT:
 """
 
 import os
+import subprocess
+import sys
+from decimal import Decimal
+from pathlib import Path
+
 from decimal import Decimal
 from pathlib import Path
 
@@ -146,6 +151,51 @@ def display_dataframe_or_info(df: pd.DataFrame, empty_message: str) -> None:
     else:
         st.dataframe(df, use_container_width=True)
 
+def run_read_only_script(script_name: str) -> None:
+    """
+    Run a local read-only helper script from the dashboard.
+
+    Safety:
+    - This should only be used for scripts that do NOT submit orders.
+    - Do not use this for alpaca_order_submit_paper_hybrid.py.
+    """
+    script_path = Path(script_name)
+
+    if not script_path.exists():
+        st.error(f"Script not found: {script_name}")
+        return
+
+    with st.spinner(f"Running {script_name}..."):
+        try:
+            result = subprocess.run(
+                [sys.executable, "-u", script_name],
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
+
+            if result.returncode == 0:
+                st.success(f"{script_name} completed successfully.")
+            else:
+                st.error(f"{script_name} finished with an error.")
+
+            if result.stdout:
+                with st.expander(f"{script_name} output", expanded=False):
+                    st.code(result.stdout)
+
+            if result.stderr:
+                with st.expander(f"{script_name} errors / warnings", expanded=False):
+                    st.code(result.stderr)
+
+        except subprocess.TimeoutExpired:
+            st.error(f"{script_name} timed out.")
+        except Exception as exc:
+            st.error(f"Could not run {script_name}.")
+            st.exception(exc)
+
+
+
+
 
 # ============================================================
 # ALPACA CONNECTION
@@ -161,6 +211,33 @@ else:
 st.warning(
     "Read-only dashboard. This app does not place trades or submit Alpaca orders."
 )
+
+# ============================================================
+# READ-ONLY ACTION BUTTONS
+# ============================================================
+
+with st.sidebar:
+    st.header("Read-Only Actions")
+
+    st.caption(
+        "These buttons refresh local files only. "
+        "They do not submit Alpaca orders."
+    )
+
+    if st.button("Run Hybrid Preview", type="primary"):
+        run_read_only_script("alpaca_order_preview_hybrid.py")
+
+    if st.button("Run Reconciliation Report"):
+        run_read_only_script("account_reconciliation_report.py")
+
+    if st.button("Refresh Dashboard"):
+        st.rerun()
+
+    st.divider()
+
+    st.warning("No order-submit buttons are available in this dashboard.")
+
+
 
 if not API_KEY or not SECRET_KEY:
     st.warning("Missing Alpaca API keys. Check your .env file.")
