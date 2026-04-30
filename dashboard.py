@@ -7,8 +7,9 @@ Purpose:
 - View recent/open orders.
 - View latest hybrid preview output.
 - View rebalance guard status.
+- View account reconciliation report.
 - View ticker ranking files and reports.
-- Download generated CSV/PDF files.
+- Download generated CSV/PDF/text files.
 
 IMPORTANT:
 - This dashboard is READ ONLY.
@@ -54,6 +55,7 @@ HYBRID_SUBMITTED_DIR = Path("alpaca_submitted_orders_hybrid")
 RANKING_DIR = Path("ticker_ranking_results")
 REPORTS_DIR = Path(".")
 REBALANCE_GUARD_DIR = Path("rebalance_guard_logs")
+RECONCILIATION_DIR = Path("account_reconciliation_reports")
 
 HYBRID_PROPOSED_ORDERS_PATH = HYBRID_PREVIEW_DIR / "proposed_orders.csv"
 HYBRID_MODEL_SCORES_PATH = HYBRID_PREVIEW_DIR / "model_scores.csv"
@@ -67,6 +69,9 @@ RANKING_CSV_PATH = RANKING_DIR / "ticker_ranking.csv"
 RANKING_PDF_PATH = RANKING_DIR / "ticker_ranking_report.pdf"
 
 REBALANCE_GUARD_LOG_PATH = REBALANCE_GUARD_DIR / "rebalance_submissions.csv"
+
+RECONCILIATION_CSV_PATH = RECONCILIATION_DIR / "account_reconciliation.csv"
+RECONCILIATION_SUMMARY_TXT_PATH = RECONCILIATION_DIR / "account_reconciliation_summary.txt"
 
 BACKTEST_REPORT_PATH = REPORTS_DIR / "xgboost_hybrid_backtest_robustness_report.pdf"
 
@@ -104,6 +109,21 @@ def safe_read_csv(path: Path) -> pd.DataFrame:
         st.error(f"Could not read file: {path}")
         st.exception(exc)
         return pd.DataFrame()
+
+
+def safe_read_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+
+    if path.stat().st_size == 0:
+        return ""
+
+    try:
+        return path.read_text()
+    except Exception as exc:
+        st.error(f"Could not read file: {path}")
+        st.exception(exc)
+        return ""
 
 
 def file_download_button(path: Path, label: str, mime: str, key: str) -> None:
@@ -179,6 +199,7 @@ except Exception as e:
     orders_tab,
     hybrid_preview_tab,
     rebalance_guard_tab,
+    reconciliation_tab,
     rankings_tab,
     reports_tab,
     safety_tab,
@@ -189,6 +210,7 @@ except Exception as e:
         "Orders",
         "Hybrid Preview",
         "Rebalance Guard",
+        "Reconciliation",
         "Rankings",
         "Reports",
         "Safety",
@@ -496,6 +518,96 @@ with rebalance_guard_tab:
 
 
 # ============================================================
+# RECONCILIATION TAB
+# ============================================================
+
+with reconciliation_tab:
+    st.subheader("Account Reconciliation")
+
+    reconciliation_df = safe_read_csv(RECONCILIATION_CSV_PATH)
+    reconciliation_summary_text = safe_read_text(RECONCILIATION_SUMMARY_TXT_PATH)
+
+    if reconciliation_df.empty and not reconciliation_summary_text:
+        st.info(
+            "No reconciliation report found yet. Run: "
+            "python -u account_reconciliation_report.py"
+        )
+    else:
+        if reconciliation_summary_text:
+            status_line = ""
+            for line in reconciliation_summary_text.splitlines():
+                if line.startswith("Status:"):
+                    status_line = line.replace("Status:", "").strip()
+                    break
+
+            if status_line:
+                if status_line.startswith("ALIGNED"):
+                    st.success(status_line)
+                elif status_line.startswith("REVIEW"):
+                    st.warning(status_line)
+                elif status_line.startswith("NOT SAFE"):
+                    st.error(status_line)
+                else:
+                    st.info(status_line)
+
+            with st.expander("View Text Summary Report", expanded=False):
+                st.text(reconciliation_summary_text)
+
+            file_download_button(
+                RECONCILIATION_SUMMARY_TXT_PATH,
+                "Download Reconciliation Summary TXT",
+                "text/plain",
+                "download_reconciliation_summary_txt",
+            )
+
+        st.divider()
+
+        st.subheader("Reconciliation Table")
+
+        if reconciliation_df.empty:
+            st.info("No reconciliation CSV rows found.")
+        else:
+            attention_df = reconciliation_df[
+                reconciliation_df.get("needs_attention", False) == True
+            ].copy()
+
+            dust_df = reconciliation_df[
+                reconciliation_df.get("is_dust_position", False) == True
+            ].copy()
+
+            selected_df = reconciliation_df[
+                reconciliation_df.get("is_selected_target", False) == True
+            ].copy()
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Selected Target Positions", len(selected_df))
+            col2.metric("Needs Attention", len(attention_df))
+            col3.metric("Dust Positions", len(dust_df))
+
+            preferred_cols = [
+                "symbol",
+                "is_selected_target",
+                "alpaca_market_value",
+                "target_value",
+                "reconciled_dollar_delta",
+                "is_dust_position",
+                "needs_attention",
+                "unrealized_pl",
+                "unrealized_plpc",
+            ]
+            cols = [c for c in preferred_cols if c in reconciliation_df.columns]
+
+            st.dataframe(reconciliation_df[cols], use_container_width=True)
+
+            file_download_button(
+                RECONCILIATION_CSV_PATH,
+                "Download Reconciliation CSV",
+                "text/csv",
+                "download_reconciliation_csv",
+            )
+
+
+# ============================================================
 # RANKINGS TAB
 # ============================================================
 
@@ -550,6 +662,20 @@ with reports_tab:
         "reports_download_backtest_pdf",
     )
 
+    file_download_button(
+        RECONCILIATION_SUMMARY_TXT_PATH,
+        "Download Reconciliation Summary TXT",
+        "text/plain",
+        "reports_download_reconciliation_summary_txt",
+    )
+
+    file_download_button(
+        RECONCILIATION_CSV_PATH,
+        "Download Reconciliation CSV",
+        "text/csv",
+        "reports_download_reconciliation_csv",
+    )
+
     st.divider()
 
     st.subheader("Submitted Hybrid Orders Log")
@@ -577,7 +703,7 @@ with safety_tab:
     st.subheader("Safety Status")
 
     st.success("This dashboard is read-only.")
-    st.write("It can view your Alpaca account, positions, orders, preview files, rankings, and reports.")
+    st.write("It can view your Alpaca account, positions, orders, preview files, rankings, reconciliation reports, and reports.")
     st.write("It does not place trades.")
     st.write("It does not call any Alpaca submit/order placement code.")
 
@@ -588,12 +714,15 @@ with safety_tab:
     st.write("1. Run the hybrid preview script from Terminal/Cursor:")
     st.code("python -u alpaca_order_preview_hybrid.py", language="bash")
 
-    st.write("2. Review the dashboard Hybrid Preview tab.")
+    st.write("2. Run the reconciliation report:")
+    st.code("python -u account_reconciliation_report.py", language="bash")
 
-    st.write("3. Only if everything looks correct, run the paper submit script manually:")
+    st.write("3. Review the dashboard Hybrid Preview, Reconciliation, and Rebalance Guard tabs.")
+
+    st.write("4. Only if everything looks correct, run the paper submit script manually:")
     st.code("python -u alpaca_order_submit_paper_hybrid.py", language="bash")
 
-    st.write("4. After orders fill, rerun the preview script and confirm no new orders are proposed.")
+    st.write("5. After orders fill, rerun preview and reconciliation, then confirm no new orders are proposed.")
 
     st.divider()
 
