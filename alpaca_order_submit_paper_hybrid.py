@@ -1,9 +1,11 @@
 """
-Submit Alpaca PAPER orders from the preview file.
+Submit Alpaca PAPER orders from the HYBRID preview file.
 
 IMPORTANT:
 - This script is PAPER ONLY.
-- It reads alpaca_preview_orders/proposed_orders.csv.
+- It reads alpaca_preview_orders_hybrid/proposed_orders.csv.
+- It checks the rebalance guard before submitting.
+- It checks Alpaca for existing open orders and skips those symbols.
 - It submits SELL orders first, then BUY orders.
 - It refuses to run unless:
     PAPER = True
@@ -11,7 +13,7 @@ IMPORTANT:
     CONFIRM_PAPER_ONLY = "YES_PAPER_ONLY"
 
 Run:
-    python -u alpaca_order_submit_paper.py
+    python -u alpaca_order_submit_paper_hybrid.py
 
 Required .env:
     APCA_API_KEY_ID
@@ -21,7 +23,7 @@ Required .env:
 import os
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Set
 
 import numpy as np
 import pandas as pd
@@ -29,9 +31,11 @@ from dotenv import load_dotenv
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+
 from rebalance_guard import assert_not_already_submitted, record_submission
 
-from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+
 # ============================================================
 # SAFETY CONFIG
 # ============================================================
@@ -39,8 +43,8 @@ from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 load_dotenv()
 
 PAPER = True
-SUBMIT_ORDERS = True  # Change to True only when you intentionally want PAPER orders.
-CONFIRM_PAPER_ONLY = "YES_PAPER_ONLY"  # Change to "YES_PAPER_ONLY" only when ready.
+SUBMIT_ORDERS = True
+CONFIRM_PAPER_ONLY = "YES_PAPER_ONLY"
 
 STRATEGY_NAME = "hybrid_plus_5"
 MODE = "paper"
@@ -48,8 +52,6 @@ ALLOW_RESUBMIT = False
 
 PREVIEW_PATH = Path("alpaca_preview_orders_hybrid/proposed_orders.csv")
 OUTPUT_DIR = Path("alpaca_submitted_orders_hybrid")
-
-
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 SUBMITTED_ORDERS_PATH = OUTPUT_DIR / "submitted_orders.csv"
@@ -85,17 +87,15 @@ def get_trading_client() -> TradingClient:
         paper=PAPER,
     )
 
-def get_open_order_symbols(client: TradingClient) -> set:
+
+def get_open_order_symbols(client: TradingClient) -> Set[str]:
     """
     Return symbols that already have open Alpaca orders.
 
     This prevents duplicate orders when a previous order is still pending,
     accepted, partially filled, or otherwise open.
     """
-    request = GetOrdersRequest(
-        status=QueryOrderStatus.OPEN,
-    )
-
+    request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
     open_orders = client.get_orders(filter=request)
 
     symbols = {
@@ -109,7 +109,6 @@ def get_open_order_symbols(client: TradingClient) -> set:
         print(", ".join(sorted(symbols)))
 
     return symbols
-
 
 
 def safety_checks() -> None:
@@ -129,7 +128,7 @@ def safety_checks() -> None:
 
     if not PREVIEW_PATH.exists():
         raise FileNotFoundError(
-            f"Could not find {PREVIEW_PATH}. Run alpaca_order_preview.py first."
+            f"Could not find {PREVIEW_PATH}. Run alpaca_order_preview_hybrid.py first."
         )
 
 
@@ -144,6 +143,7 @@ def load_proposed_orders() -> pd.DataFrame:
         "notional_for_buy",
         "qty_for_sell",
         "dollar_delta",
+        "signal_date",
     ]
 
     missing = [col for col in required_cols if col not in df.columns]
@@ -162,6 +162,28 @@ def load_proposed_orders() -> pd.DataFrame:
         return orders
 
     return orders.reset_index(drop=True)
+
+
+def get_signal_date_from_preview(orders_df: pd.DataFrame) -> str:
+    """
+    Read signal_date from proposed_orders.csv.
+
+    Requires alpaca_order_preview_hybrid.py to write signal_date.
+    """
+    if "signal_date" not in orders_df.columns:
+        raise RuntimeError(
+            "proposed_orders.csv does not contain signal_date. "
+            "Rerun alpaca_order_preview_hybrid.py after adding the signal_date columns."
+        )
+
+    signal_dates = orders_df["signal_date"].dropna().astype(str).unique()
+
+    if len(signal_dates) != 1:
+        raise RuntimeError(
+            f"Expected exactly one signal_date in proposed_orders.csv, got: {signal_dates}"
+        )
+
+    return signal_dates[0]
 
 
 def validate_order_row(row: pd.Series) -> Dict[str, object]:
@@ -229,11 +251,18 @@ def submit_one_order(client: TradingClient, order_info: Dict[str, object]):
     return client.submit_order(order_data=request)
 
 
-def order_to_row(original_row: pd.Series, status: str, message: str, alpaca_order=None) -> Dict[str, object]:
+def order_to_row(
+    original_row: pd.Series,
+    status: str,
+    message: str,
+    alpaca_order=None,
+) -> Dict[str, object]:
     return {
         "symbol": original_row.get("symbol"),
         "action": original_row.get("action"),
         "side": original_row.get("side"),
+        "signal_date": original_row.get("signal_date"),
+        "rebalance_period": original_row.get("rebalance_period"),
         "dollar_delta": original_row.get("dollar_delta"),
         "notional_for_buy": original_row.get("notional_for_buy"),
         "qty_for_sell": original_row.get("qty_for_sell"),
@@ -302,37 +331,19 @@ def submit_orders_phase(
 
     return submitted_rows
 
-def get_signal_date_from_preview(orders_df: pd.DataFrame) -> str:
-    """
-    Read signal_date from proposed_orders.csv.
-
-    Requires alpaca_order_preview_hybrid.py to write signal_date.
-    """
-    if "signal_date" not in orders_df.columns:
-        raise RuntimeError(
-            "proposed_orders.csv does not contain signal_date. "
-            "Rerun alpaca_order_preview_hybrid.py after adding the signal_date columns."
-        )
-
-    signal_dates = orders_df["signal_date"].dropna().astype(str).unique()
-
-    if len(signal_dates) != 1:
-        raise RuntimeError(
-            f"Expected exactly one signal_date in proposed_orders.csv, got: {signal_dates}"
-        )
-
-    return signal_dates[0]
-
 
 # ============================================================
 # MAIN
 # ============================================================
 
 def main() -> None:
-    print("\n===== ALPACA PAPER ORDER SUBMIT =====")
+    print("\n===== ALPACA HYBRID PAPER ORDER SUBMIT =====")
     print(f"PAPER: {PAPER}")
     print(f"SUBMIT_ORDERS: {SUBMIT_ORDERS}")
     print(f"CONFIRM_PAPER_ONLY: {CONFIRM_PAPER_ONLY}")
+    print(f"STRATEGY_NAME: {STRATEGY_NAME}")
+    print(f"MODE: {MODE}")
+    print(f"ALLOW_RESUBMIT: {ALLOW_RESUBMIT}")
     print(f"Preview file: {PREVIEW_PATH}")
 
     safety_checks()
@@ -344,7 +355,7 @@ def main() -> None:
     print(f"Account status: {getattr(account, 'status', None)}")
     print(f"Equity: {getattr(account, 'equity', None)}")
     print(f"Buying power: {getattr(account, 'buying_power', None)}")
-        
+
     orders_df = load_proposed_orders()
 
     if orders_df.empty:
@@ -360,7 +371,7 @@ def main() -> None:
         allow_resubmit=ALLOW_RESUBMIT,
     )
 
-    print(f"\nRebalance guard passed.")
+    print("\nRebalance guard passed.")
     print(f"Strategy: {STRATEGY_NAME}")
     print(f"Signal date: {signal_date}")
     print(f"Rebalance period: {rebalance_period}")
@@ -370,8 +381,11 @@ def main() -> None:
     if open_order_symbols:
         before_count = len(orders_df)
 
+        # IMPORTANT:
+        # Exclude symbols that already have open orders.
+        # The previous version accidentally kept only open-order symbols.
         orders_df = orders_df[
-        orders_df["symbol"].astype(str).str.upper().isin(open_order_symbols)
+            ~orders_df["symbol"].astype(str).str.upper().isin(open_order_symbols)
         ].copy()
 
         skipped_count = before_count - len(orders_df)
@@ -386,8 +400,6 @@ def main() -> None:
         return
 
     print("\nOrders loaded from preview:")
-
-
     cols = [
         "symbol",
         "action",
