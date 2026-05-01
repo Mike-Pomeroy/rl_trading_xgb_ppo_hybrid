@@ -1,0 +1,36 @@
+name: Python Syntax Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  syntax-check:
+    name: Check Python syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Compile important Python files
+        run: |
+          python -m py_compile \
+            dashboard.py \
+            alpaca_order_preview_hybrid.py \
+            alpaca_order_submit_paper_hybrid.py \
+            account_reconciliation_report.py \
+            rebalance_guard.py \
+            data_module.py \
+            xgb_topk_strategy.py \
+            ticker_universe_ranker.py
