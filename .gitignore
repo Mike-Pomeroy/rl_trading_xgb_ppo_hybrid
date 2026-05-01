@@ -3,19 +3,19 @@
 .env.*
 !.env.example
 
-# Python
+# Python environments
+.venv/
+venv/
+env/
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 .Python
-.venv/
-venv/
-env/
-pip-wheel-metadata/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+pip-wheel-metadata/
 
 # Mac
 .DS_Store
@@ -26,28 +26,31 @@ pip-wheel-metadata/
 # Logs
 *.log
 
-# Generated results / outputs
+# Generated Alpaca / trading outputs
 alpaca_preview_orders/
 alpaca_preview_orders_hybrid/
 alpaca_submitted_orders/
 alpaca_submitted_orders_hybrid/
+rebalance_guard_logs/
+account_reconciliation_reports/
+
+# Generated research/test outputs
 hybrid_trade_log_results/
 hybrid_universe_results/
 robustness_results/
 trade_log_results/
 universe_overlap_results/
 walkforward_universe_results/
-rebalance_guard_logs/
-account_reconciliation_reports/
 ticker_ranking_results/
 
-# Generated charts/reports
+# Generated charts/reports/data exports
 *.png
 *.pdf
 *.csv
 
-# Keep CSV templates/examples only if intentionally named
+# Keep intentionally safe examples/templates
 !*.example.csv
+!.env.example
 
 # Local scratch / archives
 legacy/
