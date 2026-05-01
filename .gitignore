@@ -38,6 +38,8 @@ trade_log_results/
 universe_overlap_results/
 walkforward_universe_results/
 rebalance_guard_logs/
+account_reconciliation_reports/
+ticker_ranking_results/
 
 # Generated charts/reports
 *.png
