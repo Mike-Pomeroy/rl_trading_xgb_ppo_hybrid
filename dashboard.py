@@ -514,7 +514,6 @@ reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
 # ============================================================
 # TABS
 # ============================================================
-
 (
     overview_tab,
     positions_tab,
@@ -525,6 +524,7 @@ reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
     readiness_tab,
     rankings_tab,
     reports_tab,
+    instructions_tab,
     safety_tab,
 ) = st.tabs(
     [
@@ -537,6 +537,7 @@ reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
         "Submit Readiness",
         "Rankings",
         "Reports",
+        "Instructions",
         "Safety",
     ]
 )
@@ -1025,6 +1026,166 @@ with reports_tab:
             "text/csv",
             "download_submitted_orders_csv",
         )
+# ============================================================
+# INSTRUCTIONS TAB
+# ============================================================
+
+with instructions_tab:
+    st.subheader("How to Use This Dashboard")
+
+    st.success(
+        "This dashboard is a read-only control center. "
+        "It helps you review the system, but it does not submit trades."
+    )
+
+    st.divider()
+
+    st.subheader("Normal Preview-Day Workflow")
+
+    st.write("Use this workflow on the first trading day of the month.")
+
+    st.markdown(
+        """
+        1. Open the dashboard.
+        2. In the sidebar, click **Run Hybrid Preview**.
+        3. Click **Run Reconciliation Report**.
+        4. Click **Refresh Dashboard**.
+        5. Review these tabs:
+           - **Overview**
+           - **Hybrid Preview**
+           - **Reconciliation**
+           - **Submit Readiness**
+           - **Rebalance Guard**
+        6. Do **not** submit orders on preview day unless you intentionally change the process.
+        """
+    )
+
+    st.divider()
+
+    st.subheader("Normal Submit-Day Workflow")
+
+    st.write("Use this workflow on the planned paper-submit day.")
+
+    st.markdown(
+        """
+        1. Click **Run Hybrid Preview**.
+        2. Click **Run Reconciliation Report**.
+        3. Click **Refresh Dashboard**.
+        4. Review **Hybrid Preview**:
+           - Confirm signal date.
+           - Confirm selected Top-3.
+           - Confirm proposed orders.
+           - Confirm open orders are zero.
+        5. Review **Reconciliation**:
+           - Confirm the account differs from the new target for expected reasons.
+        6. Review **Submit Readiness**:
+           - It should say **READY FOR MANUAL PAPER SUBMIT REVIEW**.
+        7. Review **Rebalance Guard**:
+           - Confirm the current period has not already been submitted.
+        8. If everything looks correct, run the paper submit script manually from Terminal/Cursor:
+        """
+    )
+
+    st.code("python -u alpaca_order_submit_paper_hybrid.py", language="bash")
+
+    st.warning(
+        "There is intentionally no submit button in this dashboard. "
+        "Paper submit remains a manual Terminal/Cursor command for safety."
+    )
+
+    st.divider()
+
+    st.subheader("What Each Main Tab Means")
+
+    st.markdown(
+        """
+        **Overview**  
+        Shows account status, equity, cash, buying power, position count, and open order count.
+
+        **Positions**  
+        Shows current Alpaca holdings and unrealized profit/loss.
+
+        **Orders**  
+        Shows open orders and recent Alpaca orders.
+
+        **Hybrid Preview**  
+        Shows the latest model signal, selected Top-3, proposed orders, model scores, and hybrid universe.
+
+        **Rebalance Guard**  
+        Shows whether a rebalance submission has already been recorded for a month.
+
+        **Reconciliation**  
+        Compares Alpaca holdings to the latest model target.
+
+        **Submit Readiness**  
+        Gives a checklist showing whether it is reasonable to consider manually running the paper submit script.
+
+        **Rankings**  
+        Shows the standalone ticker ranking report.
+
+        **Reports**  
+        Provides download buttons for generated reports and CSV files.
+
+        **Safety**  
+        Summarizes the safe manual workflow and confirms the dashboard is read-only.
+        """
+    )
+
+    st.divider()
+
+    st.subheader("What the Sidebar Buttons Do")
+
+    st.markdown(
+        """
+        **Run Hybrid Preview**  
+        Runs the preview script and refreshes the model target files. It does not submit orders.
+
+        **Run Reconciliation Report**  
+        Compares the latest Alpaca positions to the latest preview target. It does not submit orders.
+
+        **Refresh Dashboard**  
+        Reloads the dashboard so it displays the newest files.
+
+        **File Freshness**  
+        Shows when important local output files were last updated.
+        """
+    )
+
+    st.divider()
+
+    st.subheader("Do Not Do These")
+
+    st.error(
+        "Do not run the paper submit script twice in the same rebalance period."
+    )
+
+    st.markdown(
+        """
+        Avoid these mistakes:
+
+        - Do not submit if Alpaca has open orders.
+        - Do not submit if the Rebalance Guard says the period was already submitted.
+        - Do not submit if the dashboard is not in paper mode.
+        - Do not submit if the proposed orders look unexpected.
+        - Do not manually edit `proposed_orders.csv` before submitting.
+        - Do not put Alpaca API keys into GitHub.
+        """
+    )
+
+    st.divider()
+
+    st.subheader("Simple Rule")
+
+    st.info(
+        "Preview and reconciliation can be run freely. "
+        "Paper submit should only be run manually, on the planned submit day, after the dashboard checks pass."
+    )
+
+
+
+
+
+
 
 
 # ============================================================
