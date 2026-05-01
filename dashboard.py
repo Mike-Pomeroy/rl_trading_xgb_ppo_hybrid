@@ -392,6 +392,123 @@ def build_submit_readiness(
     return checklist_df, ready, message
 
 
+def simple_next_step_message(
+    paper_mode: bool,
+    open_orders_count: int,
+    proposed_orders_df: pd.DataFrame,
+    readiness_message: str,
+    reconciliation_status: str,
+) -> tuple[str, str]:
+    """
+    Return a plain-English status and next-step message for the Simple View.
+    """
+    if not paper_mode:
+        return (
+            "LIVE MODE WARNING",
+            "This dashboard is connected to live mode. Do not continue unless you intentionally expect live account data.",
+        )
+
+    if open_orders_count > 0:
+        return (
+            "WAIT - OPEN ORDERS EXIST",
+            "There are open Alpaca orders. Wait for them to fill or cancel before doing anything else.",
+        )
+
+    if proposed_orders_df.empty:
+        return (
+            "NO PREVIEW FOUND",
+            "Run Hybrid Preview, then run Reconciliation Report, then refresh the dashboard.",
+        )
+
+    if "action" not in proposed_orders_df.columns:
+        return (
+            "PREVIEW NEEDS REVIEW",
+            "The preview file exists, but it does not contain the expected action column.",
+        )
+
+    action_df = proposed_orders_df[
+        proposed_orders_df["action"].astype(str).str.upper().isin(["BUY", "SELL"])
+    ].copy()
+
+    if action_df.empty:
+        return (
+            "ACCOUNT APPEARS ALIGNED",
+            "No buy or sell orders are proposed. No submit action is needed.",
+        )
+
+    if readiness_message.startswith("READY"):
+        return (
+            "READY FOR MANUAL PAPER SUBMIT REVIEW",
+            "The system has proposed paper trades and the safety checklist passed. Submit should still be done manually from Terminal/Cursor on the planned submit day.",
+        )
+
+    if readiness_message.startswith("NOT READY"):
+        return (
+            readiness_message,
+            "Review the Submit Readiness tab before doing anything else.",
+        )
+
+    return (
+        "REVIEW PROPOSED CHANGES",
+        f"Reconciliation status: {reconciliation_status}. Review Hybrid Preview and Submit Readiness before taking action.",
+    )
+
+
+def summarize_simple_changes(proposed_orders_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a simplified proposed-change table for non-technical users.
+    """
+    if proposed_orders_df.empty or "action" not in proposed_orders_df.columns:
+        return pd.DataFrame()
+
+    action_df = proposed_orders_df[
+        proposed_orders_df["action"].astype(str).str.upper().isin(["BUY", "SELL"])
+    ].copy()
+
+    if action_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+
+    for _, row in action_df.iterrows():
+        symbol = str(row.get("symbol", ""))
+        action = str(row.get("action", "")).upper()
+        selected = bool(row.get("selected", False))
+        is_screened_addition = bool(row.get("is_screened_addition", False))
+
+        dollar_delta = row.get("dollar_delta", 0.0)
+
+        try:
+            dollar_delta_float = float(dollar_delta)
+        except Exception:
+            dollar_delta_float = 0.0
+
+        if action == "BUY":
+            plain_reason = "New target holding" if selected else "Increase position"
+        elif selected:
+            plain_reason = "Trim current target holding"
+        else:
+            plain_reason = "No longer selected"
+        
+        if is_screened_addition and action == "BUY":
+            plain_reason += " / screened addition"
+
+        rows.append(
+            {
+                "Symbol": symbol,
+                "Action": action,
+                "Approx Change": money(abs(dollar_delta_float)),
+                "Plain-English Reason": plain_reason,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+
+
+
+
 # ============================================================
 # ALPACA CONNECTION
 # ============================================================
@@ -514,7 +631,9 @@ reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
 # ============================================================
 # TABS
 # ============================================================
+
 (
+    simple_view_tab,
     overview_tab,
     positions_tab,
     orders_tab,
@@ -528,6 +647,7 @@ reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
     safety_tab,
 ) = st.tabs(
     [
+        "Simple View",
         "Overview",
         "Positions",
         "Orders",
@@ -541,6 +661,122 @@ reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
         "Safety",
     ]
 )
+
+# ============================================================
+# SIMPLE VIEW TAB
+# ============================================================
+
+with simple_view_tab:
+    st.subheader("Simple View")
+
+    st.write(
+        "This page gives a plain-English summary for reviewing the paper-trading system."
+    )
+
+    checklist_df, ready, readiness_message = build_submit_readiness(
+        paper_mode=PAPER,
+        open_orders_count=len(open_orders),
+        proposed_orders_df=proposed_orders_df,
+        guard_df=guard_df,
+        reconciliation_df=reconciliation_df,
+        reconciliation_status=reconciliation_status,
+    )
+
+    simple_status, simple_next_step = simple_next_step_message(
+        paper_mode=PAPER,
+        open_orders_count=len(open_orders),
+        proposed_orders_df=proposed_orders_df,
+        readiness_message=readiness_message,
+        reconciliation_status=reconciliation_status,
+    )
+
+    if simple_status.startswith("READY"):
+        st.success(simple_status)
+    elif simple_status.startswith("ACCOUNT APPEARS ALIGNED"):
+        st.success(simple_status)
+    elif simple_status.startswith("WAIT") or simple_status.startswith("NOT READY") or simple_status.startswith("LIVE"):
+        st.error(simple_status)
+    else:
+        st.warning(simple_status)
+
+    st.info(simple_next_step)
+
+    st.divider()
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Mode", "Paper" if PAPER else "Live")
+    col2.metric("Equity", money(account.equity))
+    col3.metric("Cash", money(account.cash))
+    col4.metric("Open Orders", len(open_orders))
+
+    st.divider()
+
+    st.subheader("Current Model Target")
+
+    if proposed_orders_df.empty:
+        st.info("No hybrid preview found yet.")
+    else:
+        metadata = get_latest_preview_metadata(proposed_orders_df)
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Strategy", metadata["strategy_name"])
+        col2.metric("Signal Date", metadata["signal_date"])
+        col3.metric("Rebalance Period", metadata["rebalance_period"])
+
+        if "selected" in proposed_orders_df.columns:
+            selected_df = proposed_orders_df[
+                proposed_orders_df["selected"] == True
+            ].copy()
+        else:
+            selected_df = pd.DataFrame()
+
+        if selected_df.empty:
+            st.info("No selected target holdings found in the latest preview.")
+        else:
+            selected_cols = [
+                "symbol",
+                "rank",
+                "target_value",
+                "current_value",
+                "dollar_delta",
+                "is_screened_addition",
+            ]
+            selected_cols = [c for c in selected_cols if c in selected_df.columns]
+
+            st.write("The model currently wants to hold:")
+            st.dataframe(selected_df[selected_cols], use_container_width=True)
+
+        st.divider()
+
+        st.subheader("Proposed Changes")
+
+        simple_changes_df = summarize_simple_changes(proposed_orders_df)
+
+        if simple_changes_df.empty:
+            st.success("No buy or sell changes are currently proposed.")
+        else:
+            st.warning("The model is proposing changes.")
+            st.dataframe(simple_changes_df, use_container_width=True)
+
+        st.divider()
+
+        st.subheader("Plain-English Checklist")
+
+        display_checklist = checklist_df.copy()
+
+        if not display_checklist.empty:
+            display_checklist = display_checklist[["Check", "Status", "Detail"]]
+
+        st.dataframe(display_checklist, use_container_width=True)
+
+        st.divider()
+
+        st.subheader("Important Safety Reminder")
+
+        st.warning(
+            "This dashboard does not submit orders. Any paper submit must still be run manually from Terminal/Cursor on the planned submit day."
+        )
+
 
 
 # ============================================================
