@@ -1,2 +1,29 @@
+# Core data stack
+pandas
+numpy
+matplotlib
+
+# Machine learning
+xgboost
+
+# Dashboard / app
 streamlit
-plotly
+
+# Alpaca API
+alpaca-py
+
+# Environment variables
+python-dotenv
+
+# Reports / PDFs
+reportlab
+
+# Time zones
+pytz
+
+# FinRL feature engineering
+finrl
+
+# Optional but useful for RL-related older project files
+gymnasium
+stable-baselines3
