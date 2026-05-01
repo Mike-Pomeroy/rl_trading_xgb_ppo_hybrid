@@ -8,6 +8,7 @@ Purpose:
 - View latest hybrid preview output.
 - View rebalance guard status.
 - View account reconciliation report.
+- View paper-submit readiness checklist.
 - View ticker ranking files and reports.
 - Download generated CSV/PDF/text files.
 
@@ -20,9 +21,7 @@ IMPORTANT:
 import os
 import subprocess
 import sys
-from decimal import Decimal
-from pathlib import Path
-
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -151,6 +150,20 @@ def display_dataframe_or_info(df: pd.DataFrame, empty_message: str) -> None:
     else:
         st.dataframe(df, use_container_width=True)
 
+def file_freshness(path: Path) -> str:
+    """
+    Return a readable last-modified timestamp for a local file.
+    """
+    if not path.exists():
+        return "Missing"
+
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime)
+        return modified.strftime("%Y-%m-%d %I:%M:%S %p")
+    except Exception:
+        return "Unknown"
+
+
 def run_read_only_script(script_name: str) -> None:
     """
     Run a local read-only helper script from the dashboard.
@@ -194,7 +207,189 @@ def run_read_only_script(script_name: str) -> None:
             st.exception(exc)
 
 
+def get_latest_preview_metadata(proposed_orders_df: pd.DataFrame) -> dict:
+    if proposed_orders_df.empty:
+        return {
+            "strategy_name": "Unknown",
+            "signal_date": "Unknown",
+            "rebalance_period": "Unknown",
+        }
 
+    def first_value(col: str) -> str:
+        if col not in proposed_orders_df.columns:
+            return "Unknown"
+
+        values = proposed_orders_df[col].dropna().astype(str)
+
+        if values.empty:
+            return "Unknown"
+
+        return values.iloc[0]
+
+    return {
+        "strategy_name": first_value("strategy_name"),
+        "signal_date": first_value("signal_date"),
+        "rebalance_period": first_value("rebalance_period"),
+    }
+
+
+def get_reconciliation_status(summary_text: str) -> str:
+    if not summary_text:
+        return "Unknown"
+
+    for line in summary_text.splitlines():
+        if line.startswith("Status:"):
+            return line.replace("Status:", "").strip()
+
+    return "Unknown"
+
+
+def build_submit_readiness(
+    paper_mode: bool,
+    open_orders_count: int,
+    proposed_orders_df: pd.DataFrame,
+    guard_df: pd.DataFrame,
+    reconciliation_df: pd.DataFrame,
+    reconciliation_status: str,
+) -> tuple[pd.DataFrame, bool, str]:
+    """
+    Build a read-only checklist for whether it is reasonable to consider
+    manually running alpaca_order_submit_paper_hybrid.py.
+
+    This does NOT submit orders.
+    """
+    rows = []
+
+    metadata = get_latest_preview_metadata(proposed_orders_df)
+    strategy_name = metadata["strategy_name"]
+    rebalance_period = metadata["rebalance_period"]
+
+    has_preview = not proposed_orders_df.empty
+
+    if has_preview and "action" in proposed_orders_df.columns:
+        action_df = proposed_orders_df[
+            proposed_orders_df["action"].astype(str).str.upper().isin(["BUY", "SELL"])
+        ].copy()
+    else:
+        action_df = pd.DataFrame()
+
+    proposed_order_count = len(action_df)
+
+    already_submitted = False
+
+    if (
+        not guard_df.empty
+        and strategy_name != "Unknown"
+        and rebalance_period != "Unknown"
+        and {"strategy_name", "rebalance_period", "mode"}.issubset(guard_df.columns)
+    ):
+        already_submitted = not guard_df[
+            (guard_df["strategy_name"].astype(str) == strategy_name)
+            & (guard_df["rebalance_period"].astype(str) == rebalance_period)
+            & (guard_df["mode"].astype(str) == "paper")
+        ].empty
+
+    has_reconciliation = not reconciliation_df.empty or reconciliation_status != "Unknown"
+
+    needs_attention_count = 0
+
+    if not reconciliation_df.empty and "needs_attention" in reconciliation_df.columns:
+        needs_attention_count = int((reconciliation_df["needs_attention"] == True).sum())
+
+    def add_check(name: str, passed: bool, detail: str) -> None:
+        rows.append(
+            {
+                "Check": name,
+                "Passed": bool(passed),
+                "Status": "PASS" if passed else "REVIEW",
+                "Detail": detail,
+            }
+        )
+
+    add_check(
+        "Paper mode is active",
+        paper_mode,
+        "Dashboard is connected in paper mode." if paper_mode else "Dashboard is not in paper mode.",
+    )
+
+    add_check(
+        "No open Alpaca orders",
+        open_orders_count == 0,
+        f"Open Alpaca orders: {open_orders_count}",
+    )
+
+    add_check(
+        "Hybrid preview file exists",
+        has_preview,
+        f"Preview strategy={strategy_name}, signal_date={metadata['signal_date']}, period={rebalance_period}",
+    )
+
+    add_check(
+        "Proposed orders exist",
+        proposed_order_count > 0,
+        f"Proposed BUY/SELL orders: {proposed_order_count}",
+    )
+
+    add_check(
+        "Rebalance guard has not already submitted this period",
+        not already_submitted,
+        (
+            f"No paper submission found for {strategy_name} / {rebalance_period}."
+            if not already_submitted
+            else f"Already submitted for {strategy_name} / {rebalance_period}."
+        ),
+    )
+
+    add_check(
+        "Reconciliation report exists",
+        has_reconciliation,
+        f"Reconciliation status: {reconciliation_status}",
+    )
+
+    add_check(
+        "Reconciliation expects action or review",
+        reconciliation_status.startswith("NOT NEEDED / REVIEW") or needs_attention_count > 0,
+        (
+            f"Status={reconciliation_status}, needs_attention={needs_attention_count}. "
+            "This is expected when preview has rebalance orders."
+        ),
+    )
+
+    add_check(
+        "Dashboard remains read-only",
+        True,
+        "No submit button exists in this dashboard.",
+    )
+
+    checklist_df = pd.DataFrame(rows)
+
+    ready = (
+        paper_mode
+        and open_orders_count == 0
+        and has_preview
+        and proposed_order_count > 0
+        and not already_submitted
+        and has_reconciliation
+    )
+
+    if ready:
+        message = "READY FOR MANUAL PAPER SUBMIT REVIEW"
+    elif already_submitted:
+        message = "NOT READY - already submitted for this rebalance period"
+    elif open_orders_count > 0:
+        message = "NOT READY - open Alpaca orders exist"
+    elif not has_preview:
+        message = "NOT READY - missing hybrid preview file"
+    elif proposed_order_count == 0:
+        message = "NOT READY - no proposed orders"
+    elif not has_reconciliation:
+        message = "NOT READY - missing reconciliation report"
+    elif not paper_mode:
+        message = "NOT READY - dashboard is not in paper mode"
+    else:
+        message = "REVIEW REQUIRED"
+
+    return checklist_df, ready, message
 
 
 # ============================================================
@@ -216,6 +411,7 @@ st.warning(
 # READ-ONLY ACTION BUTTONS
 # ============================================================
 
+
 with st.sidebar:
     st.header("Read-Only Actions")
 
@@ -232,6 +428,39 @@ with st.sidebar:
 
     if st.button("Refresh Dashboard"):
         st.rerun()
+
+    st.divider()
+
+    st.subheader("File Freshness")
+
+    freshness_rows = [
+        {
+            "File": "Hybrid Preview",
+            "Updated": file_freshness(HYBRID_PROPOSED_ORDERS_PATH),
+        },
+        {
+            "File": "Model Scores",
+            "Updated": file_freshness(HYBRID_MODEL_SCORES_PATH),
+        },
+        {
+            "File": "Reconciliation",
+            "Updated": file_freshness(RECONCILIATION_CSV_PATH),
+        },
+        {
+            "File": "Guard Log",
+            "Updated": file_freshness(REBALANCE_GUARD_LOG_PATH),
+        },
+        {
+            "File": "Submitted Orders",
+            "Updated": file_freshness(HYBRID_SUBMITTED_ORDERS_PATH),
+        },
+    ]
+
+    st.dataframe(
+        pd.DataFrame(freshness_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.divider()
 
@@ -267,6 +496,22 @@ except Exception as e:
 
 
 # ============================================================
+# LOAD LOCAL FILES ONCE
+# ============================================================
+
+proposed_orders_df = safe_read_csv(HYBRID_PROPOSED_ORDERS_PATH)
+model_scores_df = safe_read_csv(HYBRID_MODEL_SCORES_PATH)
+current_positions_df = safe_read_csv(HYBRID_CURRENT_POSITIONS_PATH)
+preview_open_orders_df = safe_read_csv(HYBRID_OPEN_ORDERS_PATH)
+screened_additions_df = safe_read_csv(HYBRID_SCREENED_ADDITIONS_PATH)
+hybrid_universe_df = safe_read_csv(HYBRID_UNIVERSE_PATH)
+guard_df = safe_read_csv(REBALANCE_GUARD_LOG_PATH)
+reconciliation_df = safe_read_csv(RECONCILIATION_CSV_PATH)
+reconciliation_summary_text = safe_read_text(RECONCILIATION_SUMMARY_TXT_PATH)
+reconciliation_status = get_reconciliation_status(reconciliation_summary_text)
+
+
+# ============================================================
 # TABS
 # ============================================================
 
@@ -277,6 +522,7 @@ except Exception as e:
     hybrid_preview_tab,
     rebalance_guard_tab,
     reconciliation_tab,
+    readiness_tab,
     rankings_tab,
     reports_tab,
     safety_tab,
@@ -288,6 +534,7 @@ except Exception as e:
         "Hybrid Preview",
         "Rebalance Guard",
         "Reconciliation",
+        "Submit Readiness",
         "Rankings",
         "Reports",
         "Safety",
@@ -422,41 +669,18 @@ with orders_tab:
 with hybrid_preview_tab:
     st.subheader("Latest Hybrid Preview")
 
-    proposed_orders_df = safe_read_csv(HYBRID_PROPOSED_ORDERS_PATH)
-    model_scores_df = safe_read_csv(HYBRID_MODEL_SCORES_PATH)
-    current_positions_df = safe_read_csv(HYBRID_CURRENT_POSITIONS_PATH)
-    preview_open_orders_df = safe_read_csv(HYBRID_OPEN_ORDERS_PATH)
-    screened_additions_df = safe_read_csv(HYBRID_SCREENED_ADDITIONS_PATH)
-    hybrid_universe_df = safe_read_csv(HYBRID_UNIVERSE_PATH)
-
     if proposed_orders_df.empty:
         st.info(
             "No hybrid preview file found yet. Run: "
             "python -u alpaca_order_preview_hybrid.py"
         )
     else:
-        signal_date = (
-            proposed_orders_df["signal_date"].dropna().astype(str).iloc[0]
-            if "signal_date" in proposed_orders_df.columns and not proposed_orders_df["signal_date"].dropna().empty
-            else "Unknown"
-        )
-
-        rebalance_period = (
-            proposed_orders_df["rebalance_period"].dropna().astype(str).iloc[0]
-            if "rebalance_period" in proposed_orders_df.columns and not proposed_orders_df["rebalance_period"].dropna().empty
-            else "Unknown"
-        )
-
-        strategy_name = (
-            proposed_orders_df["strategy_name"].dropna().astype(str).iloc[0]
-            if "strategy_name" in proposed_orders_df.columns and not proposed_orders_df["strategy_name"].dropna().empty
-            else "Unknown"
-        )
+        metadata = get_latest_preview_metadata(proposed_orders_df)
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("Strategy", strategy_name)
-        col2.metric("Signal Date", signal_date)
-        col3.metric("Rebalance Period", rebalance_period)
+        col1.metric("Strategy", metadata["strategy_name"])
+        col2.metric("Signal Date", metadata["signal_date"])
+        col3.metric("Rebalance Period", metadata["rebalance_period"])
 
         action_df = proposed_orders_df[
             proposed_orders_df["action"].astype(str).str.upper().isin(["BUY", "SELL"])
@@ -566,8 +790,6 @@ with hybrid_preview_tab:
 with rebalance_guard_tab:
     st.subheader("Rebalance Guard Status")
 
-    guard_df = safe_read_csv(REBALANCE_GUARD_LOG_PATH)
-
     if guard_df.empty:
         st.info("No rebalance submissions have been recorded yet.")
         st.write(f"Expected file: {REBALANCE_GUARD_LOG_PATH}")
@@ -601,32 +823,23 @@ with rebalance_guard_tab:
 with reconciliation_tab:
     st.subheader("Account Reconciliation")
 
-    reconciliation_df = safe_read_csv(RECONCILIATION_CSV_PATH)
-    reconciliation_summary_text = safe_read_text(RECONCILIATION_SUMMARY_TXT_PATH)
-
     if reconciliation_df.empty and not reconciliation_summary_text:
         st.info(
             "No reconciliation report found yet. Run: "
             "python -u account_reconciliation_report.py"
         )
     else:
+        if reconciliation_status != "Unknown":
+            if reconciliation_status.startswith("ALIGNED"):
+                st.success(reconciliation_status)
+            elif reconciliation_status.startswith("REVIEW"):
+                st.warning(reconciliation_status)
+            elif reconciliation_status.startswith("NOT SAFE"):
+                st.error(reconciliation_status)
+            else:
+                st.info(reconciliation_status)
+
         if reconciliation_summary_text:
-            status_line = ""
-            for line in reconciliation_summary_text.splitlines():
-                if line.startswith("Status:"):
-                    status_line = line.replace("Status:", "").strip()
-                    break
-
-            if status_line:
-                if status_line.startswith("ALIGNED"):
-                    st.success(status_line)
-                elif status_line.startswith("REVIEW"):
-                    st.warning(status_line)
-                elif status_line.startswith("NOT SAFE"):
-                    st.error(status_line)
-                else:
-                    st.info(status_line)
-
             with st.expander("View Text Summary Report", expanded=False):
                 st.text(reconciliation_summary_text)
 
@@ -682,6 +895,48 @@ with reconciliation_tab:
                 "text/csv",
                 "download_reconciliation_csv",
             )
+
+
+# ============================================================
+# SUBMIT READINESS TAB
+# ============================================================
+
+with readiness_tab:
+    st.subheader("Manual Paper Submit Readiness")
+
+    checklist_df, ready, readiness_message = build_submit_readiness(
+        paper_mode=PAPER,
+        open_orders_count=len(open_orders),
+        proposed_orders_df=proposed_orders_df,
+        guard_df=guard_df,
+        reconciliation_df=reconciliation_df,
+        reconciliation_status=reconciliation_status,
+    )
+
+    if ready:
+        st.success(readiness_message)
+    elif readiness_message.startswith("NOT READY"):
+        st.error(readiness_message)
+    else:
+        st.warning(readiness_message)
+
+    st.write(
+        "This tab does not submit orders. It only tells you whether the manual "
+        "paper submit script is reasonable to consider."
+    )
+
+    st.dataframe(checklist_df, use_container_width=True)
+
+    st.divider()
+
+    st.subheader("Manual Submit Command")
+
+    st.code("python -u alpaca_order_submit_paper_hybrid.py", language="bash")
+
+    st.warning(
+        "Run this command only from Terminal/Cursor, only on the planned submit day, "
+        "and only after reviewing Hybrid Preview, Reconciliation, and Rebalance Guard."
+    )
 
 
 # ============================================================
@@ -788,13 +1043,13 @@ with safety_tab:
 
     st.subheader("Manual Trading Workflow")
 
-    st.write("1. Run the hybrid preview script from Terminal/Cursor:")
+    st.write("1. Run the hybrid preview script from the dashboard sidebar or Terminal/Cursor:")
     st.code("python -u alpaca_order_preview_hybrid.py", language="bash")
 
-    st.write("2. Run the reconciliation report:")
+    st.write("2. Run the reconciliation report from the dashboard sidebar or Terminal/Cursor:")
     st.code("python -u account_reconciliation_report.py", language="bash")
 
-    st.write("3. Review the dashboard Hybrid Preview, Reconciliation, and Rebalance Guard tabs.")
+    st.write("3. Review the dashboard Hybrid Preview, Reconciliation, Rebalance Guard, and Submit Readiness tabs.")
 
     st.write("4. Only if everything looks correct, run the paper submit script manually:")
     st.code("python -u alpaca_order_submit_paper_hybrid.py", language="bash")
