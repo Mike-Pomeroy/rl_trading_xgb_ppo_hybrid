@@ -56,6 +56,7 @@ def get_secret(name, default=None):
 API_KEY = get_secret("ALPACA_API_KEY")
 SECRET_KEY = get_secret("ALPACA_SECRET_KEY")
 PAPER = str(get_secret("ALPACA_PAPER", "true")).lower() == "true"
+CLOUD_VIEW_ONLY = os.getenv("CLOUD_VIEW_ONLY", "false").lower() == "true"
 
 if not API_KEY or not SECRET_KEY:
     st.warning("Missing Alpaca API keys. Check Streamlit Secrets or your local .env file.")
@@ -540,25 +541,39 @@ st.warning(
 # READ-ONLY ACTION BUTTONS
 # ============================================================
 
-
 with st.sidebar:
     st.header("Read-Only Actions")
 
-    st.caption(
-        "These buttons refresh local files only. "
-        "They do not submit Alpaca orders."
-    )
+    if CLOUD_VIEW_ONLY:
+        st.info(
+            "Cloud View Only mode is active. "
+            "This hosted dashboard can view Alpaca account data, but preview/reconciliation "
+            "should still be run from the Mac dashboard for trading decisions."
+        )
 
-    if st.button("Run Hybrid Preview", type="primary"):
-        run_read_only_script("alpaca_order_preview_hybrid.py")
+        if st.button("Refresh Dashboard"):
+            st.rerun()
 
-    if st.button("Run Reconciliation Report"):
-        run_read_only_script("account_reconciliation_report.py")
+    else:
+        st.caption(
+            "These buttons refresh local files only. "
+            "They do not submit Alpaca orders."
+        )
 
-    if st.button("Refresh Dashboard"):
-        st.rerun()
+        if st.button("Run Hybrid Preview", type="primary"):
+            run_read_only_script("alpaca_order_preview_hybrid.py")
+
+        if st.button("Run Reconciliation Report"):
+            run_read_only_script("account_reconciliation_report.py")
+
+        if st.button("Refresh Dashboard"):
+            st.rerun()
 
     st.divider()
+
+
+
+
 
     st.subheader("File Freshness")
 
