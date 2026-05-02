@@ -53,7 +53,7 @@ def get_secret(name, default=None):
         return os.getenv(name, default)
 
 
-API_KEY = get_secret('APCA_API_KEY_ID'))
+API_KEY = get_secret('APCA_API_KEY_ID')
 SECRET_KEY = get_secret("APCA_API_SECRET_KEY")
 PAPER = str(get_secret("ALPACA_PAPER", "true")).lower() == "true"
 CLOUD_VIEW_ONLY = os.getenv("CLOUD_VIEW_ONLY", "false").lower() == "true"
