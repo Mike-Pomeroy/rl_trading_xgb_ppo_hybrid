@@ -598,7 +598,8 @@ with st.sidebar:
 
     st.dataframe(
         pd.DataFrame(freshness_rows),
-        use_container_width=True,
+        
+        width="stretch",
         hide_index=True,
     )
 
@@ -767,7 +768,7 @@ with simple_view_tab:
             selected_cols = [c for c in selected_cols if c in selected_df.columns]
 
             st.write("The model currently wants to hold:")
-            st.dataframe(selected_df[selected_cols], use_container_width=True)
+            st.dataframe(selected_df[selected_cols], width="stretch")
 
         st.divider()
 
@@ -779,7 +780,7 @@ with simple_view_tab:
             st.success("No buy or sell changes are currently proposed.")
         else:
             st.warning("The model is proposing changes.")
-            st.dataframe(simple_changes_df, use_container_width=True)
+            st.dataframe(simple_changes_df, width="stretch")
 
         st.divider()
 
@@ -790,7 +791,7 @@ with simple_view_tab:
         if not display_checklist.empty:
             display_checklist = display_checklist[["Check", "Status", "Detail"]]
 
-        st.dataframe(display_checklist, use_container_width=True)
+        st.dataframe(display_checklist, width="stretch")
 
         st.divider()
 
@@ -854,7 +855,7 @@ with positions_tab:
             )
 
         positions_df = pd.DataFrame(position_rows)
-        st.dataframe(positions_df, use_container_width=True)
+        st.dataframe(positions_df, width="stretch")
 
         total_market_value = sum(
             float(getattr(p, "market_value", 0) or 0)
@@ -892,7 +893,7 @@ with orders_tab:
                 }
             )
 
-        st.dataframe(pd.DataFrame(open_order_rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(open_order_rows), width="stretch")
 
     st.divider()
 
@@ -919,7 +920,7 @@ with orders_tab:
                 }
             )
 
-        st.dataframe(pd.DataFrame(recent_order_rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(recent_order_rows), width="stretch")
 
 
 # ============================================================
@@ -967,7 +968,7 @@ with hybrid_preview_tab:
                 "qty_for_sell",
             ]
             cols = [c for c in preferred_cols if c in action_df.columns]
-            st.dataframe(action_df[cols], use_container_width=True)
+            st.dataframe(action_df[cols], width="stretch")
 
         file_download_button(
             HYBRID_PROPOSED_ORDERS_PATH,
@@ -987,9 +988,9 @@ with hybrid_preview_tab:
         cols = [c for c in preferred_cols if c in model_scores_df.columns]
 
         if cols:
-            st.dataframe(model_scores_df[cols].head(30), use_container_width=True)
+            st.dataframe(model_scores_df[cols].head(30), width="stretch")
         else:
-            st.dataframe(model_scores_df.head(30), use_container_width=True)
+            st.dataframe(model_scores_df.head(30), width="stretch")
 
         file_download_button(
             HYBRID_MODEL_SCORES_PATH,
@@ -1005,7 +1006,7 @@ with hybrid_preview_tab:
     if hybrid_universe_df.empty:
         st.info("No hybrid universe file found yet.")
     else:
-        st.dataframe(hybrid_universe_df, use_container_width=True)
+        st.dataframe(hybrid_universe_df, width="stretch")
 
         if "is_screened_addition" in hybrid_universe_df.columns:
             additions = hybrid_universe_df[
@@ -1031,7 +1032,7 @@ with hybrid_preview_tab:
         st.success("Preview file shows no open orders, or no open-orders file exists.")
     else:
         st.error("Preview file contains open orders. Do not submit new orders.")
-        st.dataframe(preview_open_orders_df, use_container_width=True)
+        st.dataframe(preview_open_orders_df, width="stretch")
 
     st.divider()
 
@@ -1054,7 +1055,7 @@ with rebalance_guard_tab:
         st.info("No rebalance submissions have been recorded yet.")
         st.write(f"Expected file: {REBALANCE_GUARD_LOG_PATH}")
     else:
-        st.dataframe(guard_df.sort_values("submitted_at", ascending=False), use_container_width=True)
+        st.dataframe(guard_df.sort_values("submitted_at", ascending=False), width="stretch")
 
         latest = guard_df.sort_values("submitted_at", ascending=False).iloc[0]
 
@@ -1147,7 +1148,7 @@ with reconciliation_tab:
             ]
             cols = [c for c in preferred_cols if c in reconciliation_df.columns]
 
-            st.dataframe(reconciliation_df[cols], use_container_width=True)
+            st.dataframe(reconciliation_df[cols], width="stretch")
 
             file_download_button(
                 RECONCILIATION_CSV_PATH,
@@ -1185,7 +1186,7 @@ with readiness_tab:
         "paper submit script is reasonable to consider."
     )
 
-    st.dataframe(checklist_df, use_container_width=True)
+    st.dataframe(checklist_df, width="stretch")
 
     st.divider()
 
@@ -1214,7 +1215,7 @@ with rankings_tab:
             "ticker_ranking_results/ticker_ranking.csv"
         )
     else:
-        st.dataframe(rankings_df, use_container_width=True)
+        st.dataframe(rankings_df, width="stretch")
 
         file_download_button(
             RANKING_CSV_PATH,
@@ -1277,7 +1278,7 @@ with reports_tab:
     if submitted_df.empty:
         st.info("No submitted hybrid orders log found yet.")
     else:
-        st.dataframe(submitted_df, use_container_width=True)
+        st.dataframe(submitted_df, width="stretch")
 
         file_download_button(
             HYBRID_SUBMITTED_ORDERS_PATH,
