@@ -157,7 +157,7 @@ def display_dataframe_or_info(df: pd.DataFrame, empty_message: str) -> None:
     if df.empty:
         st.info(empty_message)
     else:
-        st.dataframe(df, use_container_width=True)
+       st.dataframe(df, width="stretch")
 
 def file_freshness(path: Path) -> str:
     """
