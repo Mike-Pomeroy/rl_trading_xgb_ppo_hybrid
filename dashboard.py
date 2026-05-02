@@ -53,14 +53,10 @@ def get_secret(name, default=None):
         return os.getenv(name, default)
 
 
-API_KEY = get_secret("ALPACA_API_KEY")
-SECRET_KEY = get_secret("ALPACA_SECRET_KEY")
+API_KEY = get_secret('APCA_API_KEY_ID'))
+SECRET_KEY = get_secret("APCA_API_SECRET_KEY")
 PAPER = str(get_secret("ALPACA_PAPER", "true")).lower() == "true"
 CLOUD_VIEW_ONLY = os.getenv("CLOUD_VIEW_ONLY", "false").lower() == "true"
-
-if not API_KEY or not SECRET_KEY:
-    st.warning("Missing Alpaca API keys. Check Streamlit Secrets or your local .env file.")
-    st.stop()
 
 
 # ============================================================
