@@ -1,10 +1,10 @@
 # Core data stack
 pandas
 numpy
-matplotlib
+#matplotlib
 
 # Machine learning
-xgboost
+#xgboost
 
 # Dashboard / app
 streamlit
@@ -22,8 +22,8 @@ reportlab
 pytz
 
 # FinRL feature engineering
-finrl
+#finrl
 
 # Optional but useful for RL-related older project files
-gymnasium
-stable-baselines3
+#gymnasium
+#stable-baselines3
