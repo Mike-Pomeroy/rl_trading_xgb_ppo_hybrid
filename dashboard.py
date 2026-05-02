@@ -25,6 +25,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+from config import ALPACA_API_KEY
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -45,9 +46,16 @@ st.set_page_config(
 
 load_dotenv()
 
-API_KEY = os.getenv("APCA_API_KEY_ID")
-SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
+
+#API_KEY = os.getenv("APCA_API_KEY_ID")
+#SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
 PAPER = os.getenv("ALPACA_PAPER", "true").lower() == "true"
+
+API_KEY = st.secrets["ALPACA_API_KEY"]
+SECRET_KEY = st.secrets["ALPACA_SECRET_KEY"]
+
+
+
 
 
 # ============================================================
