@@ -10,7 +10,11 @@ except ImportError:
 
 # ----------------------------
 # ALPACA PAPER TRADING
+API_KEY = os.getenv("APCA_API_KEY_ID")
+SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
+
 # ----------------------------
+"""
 ALPACA_API_KEY = os.getenv("APCA_API_KEY_ID", "").strip()
 ALPACA_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY", "").strip()
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets").strip()
@@ -20,13 +24,13 @@ if not ALPACA_API_KEY:
 
 if not ALPACA_SECRET_KEY:
     raise ValueError("Missing ALPACA_SECRET_KEY in environment or .env file")
-
+"""
 
 # ----------------------------
 # MONTHLY XGBOOST PAPER TRADING
 # ----------------------------
 XGB_SYMBOLS = [
-   AAPL", "MSFT", "SPY", "GOOGL", "AMZN",
+   "AAPL", "MSFT", "SPY", "GOOGL", "AMZN",
             "META", "TSLA", "NVDA", "JPM", "JNJ",
             "AVGO", "LLY", "UNH", "COST", "V",
             "MA", "HD", "PG", "XOM", "AMD"
