@@ -46,16 +46,20 @@ st.set_page_config(
 
 load_dotenv()
 
-
-#API_KEY = os.getenv("APCA_API_KEY_ID")
-#SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-PAPER = os.getenv("ALPACA_PAPER", "true").lower() == "true"
-
-API_KEY = st.secrets["ALPACA_API_KEY"]
-SECRET_KEY = st.secrets["ALPACA_SECRET_KEY"]
+def get_secret(name, default=None):
+    try:
+        return st.secrets[name]
+    except Exception:
+        return os.getenv(name, default)
 
 
+API_KEY = get_secret("ALPACA_API_KEY")
+SECRET_KEY = get_secret("ALPACA_SECRET_KEY")
+PAPER = str(get_secret("ALPACA_PAPER", "true")).lower() == "true"
 
+if not API_KEY or not SECRET_KEY:
+    st.warning("Missing Alpaca API keys. Check Streamlit Secrets or your local .env file.")
+    st.stop()
 
 
 # ============================================================
