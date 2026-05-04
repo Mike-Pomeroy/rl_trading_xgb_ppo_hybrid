@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -20,6 +21,13 @@ CURRENT_POSITIONS_PATH = PREVIEW_DIR / "current_positions.csv"
 MODEL_SCORES_PATH = PREVIEW_DIR / "model_scores.csv"
 OPEN_ORDERS_PATH = PREVIEW_DIR / "open_orders.csv"
 
+ACCOUNT_RECONCILIATION_SUMMARY_PATH = (
+    BASE_DIR / "account_reconciliation_reports" / "account_reconciliation_summary.txt"
+)
+TICKER_RANKING_PATH = BASE_DIR / "ticker_ranking_results" / "ticker_ranking.csv"
+
+STALE_AFTER_HOURS = 24
+
 
 def get_secret_or_env(name: str, default=None):
     try:
@@ -38,25 +46,76 @@ def load_csv(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def file_modified_time(path: Path):
+    if not path.exists():
+        return None
+    return datetime.fromtimestamp(path.stat().st_mtime)
+
+
+def file_age_label(path: Path) -> str:
+    modified = file_modified_time(path)
+    if modified is None:
+        return "Missing"
+
+    age = datetime.now() - modified
+
+    if age < timedelta(minutes=1):
+        return "Updated less than 1 minute ago"
+    if age < timedelta(hours=1):
+        minutes = int(age.total_seconds() // 60)
+        return f"Updated {minutes} minute(s) ago"
+    if age < timedelta(days=1):
+        hours = int(age.total_seconds() // 3600)
+        return f"Updated {hours} hour(s) ago"
+
+    days = age.days
+    return f"Updated {days} day(s) ago"
+
+
+def is_file_stale(path: Path, stale_after_hours: int = STALE_AFTER_HOURS) -> bool:
+    modified = file_modified_time(path)
+    if modified is None:
+        return True
+
+    return datetime.now() - modified > timedelta(hours=stale_after_hours)
+
+
 def show_dataframe(title: str, df: pd.DataFrame, empty_message: str):
     st.subheader(title)
     if df.empty:
         st.info(empty_message)
     else:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
+
+
+def show_text_file(title: str, path: Path, empty_message: str):
+    st.subheader(title)
+    if not path.exists():
+        st.info(empty_message)
+        return
+
+    try:
+        text = path.read_text()
+    except Exception as exc:
+        st.warning(f"Could not read {path.name}: {exc}")
+        return
+
+    if not text.strip():
+        st.info(empty_message)
+    else:
+        st.text(text)
 
 
 st.title("📈 Trading Starter Dashboard")
 
 st.warning(
     "Read-only dashboard. This app does not submit, cancel, replace, or close orders. "
-    "Use your existing Cursor trading workflow for actual trade submission."
+    "Use your existing Cursor trading workflow for aual trade submission."
 )
 
 trading_mode = get_secret_or_env("TRADING_MODE", "paper")
 enable_live_trading = str(get_secret_or_env("ENABLE_LIVE_TRADING", "false")).lower() == "true"
 require_manual_approval = str(get_secret_or_env("REQUIRE_MANUAL_APPROVAL", "true")).lower() == "true"
-max_position_pct = get_secret_or_env("MAX_POSITION_PCT", "0.25")
 cash_buffer_pct = get_secret_or_env("CASH_BUFFER_PCT", "0.15")
 
 col1, col2, col3, col4 = st.columns(4)
@@ -83,10 +142,53 @@ else:
 
 st.divider()
 
+st.header("Preview File Freshness")
+
+preview_files = {
+    "Proposed Orders": PROPOSED_ORDERS_PATH,
+    "Current Positions": CURRENT_POSITIONS_PATH,
+    "Model Scores": MODEL_SCORES_PATH,
+    "Open Orders": OPEN_ORDERS_PATH,
+}
+
+freshness_rows = []
+
+for label, path in preview_files.items():
+    freshness_rows.append(
+        {
+            "File": label,
+            "Path": str(path.relative_to(BASE_DIR)),
+            "Status": "Exists" if path.exists() else "Missing",
+            "Last Updated": file_age_label(path),
+            "Stale": "YES" if is_file_stale(path) else "NO",
+        }
+    )
+
+freshness_df = pd.DataFrame(freshness_rows)
+st.dataframe(freshness_df, width='stretch')
+
+missing_files = [label for label, path in preview_files.items() if not path.exists()]
+stale_files = [label for label, path in preview_files.items() if is_file_stale(path)]
+
+if missing_files:
+    st.error(
+        "Some preview files are missing. Run the normal preview workflow before relying on this dashboard."
+    )
+elif stale_files:
+    st.warning(
+        f"Some preview files appear older than {STALE_AFTER_HOURS} hours. "
+        "Run a fresh preview before submitting trades."
+    )
+else:
+    st.success("Preview files look fresh.")
+
+st.divider()
+
 proposed_orders = load_csv(PROPOSED_ORDERS_PATH)
 current_positions = load_csv(CURRENT_POSITIONS_PATH)
 model_scores = load_csv(MODEL_SCORES_PATH)
 open_orders = load_csv(OPEN_ORDERS_PATH)
+ticker_rankings = load_csv(TICKER_RANKING_PATH)
 
 st.header("Portfolio / Order Preview Files")
 
@@ -132,16 +234,31 @@ show_dataframe(
 
 st.divider()
 
+show_text_file(
+    "Account Reconciliation Summary",
+    ACCOUNT_RECONCILIATION_SUMMARY_PATH,
+    "No account reconciliation summary found.",
+)
+
+show_dataframe(
+    "Latest Ticker Rankings",
+    ticker_rankings,
+    "No ticker ranking file found.",
+)
+
+st.divider()
+
 st.header("Safety Checklist")
 
 st.markdown(
     """
-- This dashboard only reads local CSV output files.
+- This dashboard only reads local CSV/text output files.
 - It does not connect to Alpaca directly.
 - It does not submit orders.
 - It does not cancel orders.
 - It does not close positions.
 - It does not modify your trading system.
+- Check file freshness before relying on proposed orders.
 - Actual order submission should continue through your existing tested workflow.
 """
 )
