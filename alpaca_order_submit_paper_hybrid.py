@@ -7,6 +7,7 @@ IMPORTANT:
 - It checks the rebalance guard before submitting.
 - It checks Alpaca for existing open orders and skips those symbols.
 - It submits SELL orders first, then BUY orders.
+- It saves a frozen monthly target snapshot after a submission attempt.
 - It refuses to run unless:
     PAPER = True
     SUBMIT_ORDERS = True
@@ -34,6 +35,7 @@ from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 
 from rebalance_guard import assert_not_already_submitted, record_submission
+from target_snapshot import save_target_snapshot
 
 
 # ============================================================
@@ -59,6 +61,10 @@ SUBMITTED_ORDERS_PATH = OUTPUT_DIR / "submitted_orders.csv"
 # Avoid accidental tiny/noisy orders.
 MIN_BUY_NOTIONAL = 10.0
 MIN_SELL_QTY = 0.000001
+
+# Reduce sell quantity slightly to avoid Alpaca insufficient-quantity errors
+# caused by rounding differences between preview file and actual position qty.
+SELL_QTY_SAFETY_MULTIPLIER = 0.9999
 
 # Pause between sell phase and buy phase.
 WAIT_AFTER_SELLS_SECONDS = 5
@@ -109,6 +115,31 @@ def get_open_order_symbols(client: TradingClient) -> Set[str]:
         print(", ".join(sorted(symbols)))
 
     return symbols
+
+
+def get_position_qty_map(client: TradingClient) -> Dict[str, float]:
+    """
+    Return current Alpaca position quantities by symbol.
+
+    Used to cap SELL orders so we never request more shares than Alpaca shows
+    as currently held.
+    """
+    positions = client.get_all_positions()
+
+    qty_map = {}
+
+    for position in positions:
+        symbol = str(getattr(position, "symbol", "")).upper()
+
+        if not symbol:
+            continue
+
+        try:
+            qty_map[symbol] = float(position.qty)
+        except Exception:
+            qty_map[symbol] = 0.0
+
+    return qty_map
 
 
 def safety_checks() -> None:
@@ -186,7 +217,10 @@ def get_signal_date_from_preview(orders_df: pd.DataFrame) -> str:
     return signal_dates[0]
 
 
-def validate_order_row(row: pd.Series) -> Dict[str, object]:
+def validate_order_row(
+    row: pd.Series,
+    position_qty_map: Dict[str, float],
+) -> Dict[str, object]:
     symbol = str(row["symbol"]).upper()
     action = str(row["action"]).upper()
 
@@ -210,12 +244,34 @@ def validate_order_row(row: pd.Series) -> Dict[str, object]:
             "qty": None,
         }
 
-    qty = float(row.get("qty_for_sell", np.nan))
+    preview_qty = float(row.get("qty_for_sell", np.nan))
 
-    if not np.isfinite(qty) or qty < MIN_SELL_QTY:
+    if not np.isfinite(preview_qty) or preview_qty < MIN_SELL_QTY:
         return {
             "valid": False,
-            "reason": f"SELL qty below minimum or invalid: {qty}",
+            "reason": f"SELL qty below minimum or invalid: {preview_qty}",
+        }
+
+    actual_qty = float(position_qty_map.get(symbol, 0.0))
+
+    if actual_qty < MIN_SELL_QTY:
+        return {
+            "valid": False,
+            "reason": f"No Alpaca position quantity available to sell: {actual_qty}",
+        }
+
+    # Sell the lower of preview qty and actual Alpaca qty, then apply a tiny
+    # safety multiplier to avoid insufficient-quantity errors.
+    safe_qty = min(preview_qty, actual_qty) * SELL_QTY_SAFETY_MULTIPLIER
+    safe_qty = round(safe_qty, 6)
+
+    if safe_qty < MIN_SELL_QTY:
+        return {
+            "valid": False,
+            "reason": (
+                f"Safe SELL qty below minimum after cap/buffer. "
+                f"preview_qty={preview_qty}, actual_qty={actual_qty}, safe_qty={safe_qty}"
+            ),
         }
 
     return {
@@ -223,7 +279,9 @@ def validate_order_row(row: pd.Series) -> Dict[str, object]:
         "symbol": symbol,
         "side": OrderSide.SELL,
         "notional": None,
-        "qty": round(qty, 6),
+        "qty": safe_qty,
+        "preview_qty": preview_qty,
+        "actual_qty": actual_qty,
     }
 
 
@@ -256,6 +314,8 @@ def order_to_row(
     status: str,
     message: str,
     alpaca_order=None,
+    submitted_qty=None,
+    actual_position_qty=None,
 ) -> Dict[str, object]:
     return {
         "symbol": original_row.get("symbol"),
@@ -266,6 +326,8 @@ def order_to_row(
         "dollar_delta": original_row.get("dollar_delta"),
         "notional_for_buy": original_row.get("notional_for_buy"),
         "qty_for_sell": original_row.get("qty_for_sell"),
+        "submitted_qty": submitted_qty,
+        "actual_position_qty": actual_position_qty,
         "status": status,
         "message": message,
         "alpaca_order_id": getattr(alpaca_order, "id", None) if alpaca_order is not None else None,
@@ -278,6 +340,7 @@ def submit_orders_phase(
     client: TradingClient,
     orders_df: pd.DataFrame,
     action: str,
+    position_qty_map: Dict[str, float],
 ) -> List[Dict[str, object]]:
     submitted_rows = []
 
@@ -291,7 +354,7 @@ def submit_orders_phase(
 
     for _, row in phase_orders.iterrows():
         symbol = row["symbol"]
-        order_info = validate_order_row(row)
+        order_info = validate_order_row(row, position_qty_map)
 
         if not order_info["valid"]:
             print(f"SKIP {action} {symbol}: {order_info['reason']}")
@@ -304,7 +367,11 @@ def submit_orders_phase(
             if action == "BUY":
                 print(f"Submitting BUY {symbol}: notional=${order_info['notional']:,.2f}")
             else:
-                print(f"Submitting SELL {symbol}: qty={order_info['qty']}")
+                print(
+                    f"Submitting SELL {symbol}: qty={order_info['qty']} "
+                    f"(preview_qty={order_info.get('preview_qty')}, "
+                    f"actual_qty={order_info.get('actual_qty')})"
+                )
 
             alpaca_order = submit_one_order(client, order_info)
 
@@ -320,6 +387,8 @@ def submit_orders_phase(
                     status="submitted",
                     message="submitted",
                     alpaca_order=alpaca_order,
+                    submitted_qty=order_info.get("qty"),
+                    actual_position_qty=order_info.get("actual_qty"),
                 )
             )
 
@@ -381,9 +450,7 @@ def main() -> None:
     if open_order_symbols:
         before_count = len(orders_df)
 
-        # IMPORTANT:
         # Exclude symbols that already have open orders.
-        # The previous version accidentally kept only open-order symbols.
         orders_df = orders_df[
             ~orders_df["symbol"].astype(str).str.upper().isin(open_order_symbols)
         ].copy()
@@ -399,6 +466,8 @@ def main() -> None:
         print("All proposed orders were skipped due to existing open orders.")
         return
 
+    position_qty_map = get_position_qty_map(client)
+
     print("\nOrders loaded from preview:")
     cols = [
         "symbol",
@@ -412,16 +481,44 @@ def main() -> None:
     submitted_rows = []
 
     if SELL_FIRST:
-        submitted_rows.extend(submit_orders_phase(client, orders_df, "SELL"))
+        submitted_rows.extend(
+            submit_orders_phase(
+                client=client,
+                orders_df=orders_df,
+                action="SELL",
+                position_qty_map=position_qty_map,
+            )
+        )
 
         if WAIT_AFTER_SELLS_SECONDS > 0:
             print(f"\nWaiting {WAIT_AFTER_SELLS_SECONDS} seconds after sells...")
             time.sleep(WAIT_AFTER_SELLS_SECONDS)
 
-        submitted_rows.extend(submit_orders_phase(client, orders_df, "BUY"))
+        submitted_rows.extend(
+            submit_orders_phase(
+                client=client,
+                orders_df=orders_df,
+                action="BUY",
+                position_qty_map=position_qty_map,
+            )
+        )
     else:
-        submitted_rows.extend(submit_orders_phase(client, orders_df, "BUY"))
-        submitted_rows.extend(submit_orders_phase(client, orders_df, "SELL"))
+        submitted_rows.extend(
+            submit_orders_phase(
+                client=client,
+                orders_df=orders_df,
+                action="BUY",
+                position_qty_map=position_qty_map,
+            )
+        )
+        submitted_rows.extend(
+            submit_orders_phase(
+                client=client,
+                orders_df=orders_df,
+                action="SELL",
+                position_qty_map=position_qty_map,
+            )
+        )
 
     submitted_df = pd.DataFrame(submitted_rows)
     submitted_df.to_csv(SUBMITTED_ORDERS_PATH, index=False)
@@ -437,8 +534,25 @@ def main() -> None:
             mode=MODE,
             notes=f"Submitted from {PREVIEW_PATH}",
         )
+
+        print("\nRecorded rebalance submission guard:")
+        print(f"Strategy: {STRATEGY_NAME}")
+        print(f"Period:   {rebalance_period}")
+        print(f"Mode:     {MODE}")
+
+        snapshot_path = save_target_snapshot(
+            proposed_orders_path=PREVIEW_PATH,
+            strategy_name=STRATEGY_NAME,
+            rebalance_period=rebalance_period,
+            mode=MODE,
+        )
+
+        print("\nFrozen monthly target snapshot saved:")
+        print(f"Snapshot: {snapshot_path}")
+
     else:
         print("\nNo submitted/error orders recorded, so rebalance guard was not updated.")
+        print("No frozen monthly target snapshot was saved.")
 
     print("\n===== SAVED =====")
     print(f"Submitted order log: {SUBMITTED_ORDERS_PATH}")

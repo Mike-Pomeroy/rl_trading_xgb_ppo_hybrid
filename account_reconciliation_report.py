@@ -4,7 +4,8 @@ Account reconciliation report for the hybrid Alpaca paper trading system.
 Purpose:
 - Read current Alpaca positions and open orders.
 - Read the latest hybrid preview target portfolio.
-- Compare current Alpaca holdings against model target values.
+- If a frozen monthly target snapshot exists, use that instead of the moving preview.
+- Compare current Alpaca holdings against target values.
 - Show dollar drift by symbol.
 - Show whether the account appears aligned.
 - Show whether it is safe to consider a future submit.
@@ -27,7 +28,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,8 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 
+from target_snapshot import load_target_snapshot_if_exists
+
 
 # ============================================================
 # CONFIG
@@ -45,6 +48,7 @@ from alpaca.trading.requests import GetOrdersRequest
 load_dotenv()
 
 PAPER = True
+DEFAULT_STRATEGY_NAME = "hybrid_plus_5"
 
 PREVIEW_DIR = Path("alpaca_preview_orders_hybrid")
 OUTPUT_DIR = Path("account_reconciliation_reports")
@@ -106,6 +110,105 @@ def safe_read_csv(path: Path) -> pd.DataFrame:
         return pd.read_csv(path)
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
+
+
+def first_value_as_str(
+    df: pd.DataFrame,
+    column: str,
+    default: str = "Unknown",
+) -> str:
+    if df.empty or column not in df.columns:
+        return default
+
+    values = df[column].dropna().astype(str).unique()
+
+    if len(values) == 0:
+        return default
+
+    return str(values[0])
+
+
+# ============================================================
+# TARGET SOURCE / SNAPSHOT HELPERS
+# ============================================================
+
+def choose_target_dataframe(
+    latest_preview_df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    """
+    Decide whether reconciliation should use:
+    - latest preview file, or
+    - frozen monthly target snapshot.
+
+    Before submit, no frozen snapshot usually exists, so latest preview is used.
+    After submit, a frozen snapshot should exist, so reconciliation stops chasing
+    changing previews.
+    """
+    if latest_preview_df.empty:
+        return latest_preview_df, {
+            "target_source": "missing_preview",
+            "target_source_detail": f"No preview file found at {PROPOSED_ORDERS_PATH}",
+            "snapshot_path": "",
+            "strategy_name": DEFAULT_STRATEGY_NAME,
+            "rebalance_period": "Unknown",
+            "signal_date": "Unknown",
+        }
+
+    strategy_name = first_value_as_str(
+        latest_preview_df,
+        "strategy_name",
+        DEFAULT_STRATEGY_NAME,
+    )
+    rebalance_period = first_value_as_str(
+        latest_preview_df,
+        "rebalance_period",
+        "Unknown",
+    )
+    signal_date = first_value_as_str(
+        latest_preview_df,
+        "signal_date",
+        "Unknown",
+    )
+
+    mode_for_snapshot = "paper" if PAPER else "live"
+
+    if rebalance_period != "Unknown":
+        snapshot_df, snapshot_path = load_target_snapshot_if_exists(
+            strategy_name=strategy_name,
+            rebalance_period=rebalance_period,
+            mode=mode_for_snapshot,
+        )
+
+        if not snapshot_df.empty:
+            return snapshot_df, {
+                "target_source": "frozen_snapshot",
+                "target_source_detail": "Using frozen monthly target snapshot.",
+                "snapshot_path": str(snapshot_path),
+                "strategy_name": first_value_as_str(
+                    snapshot_df,
+                    "snapshot_strategy_name",
+                    strategy_name,
+                ),
+                "rebalance_period": first_value_as_str(
+                    snapshot_df,
+                    "snapshot_rebalance_period",
+                    rebalance_period,
+                ),
+                "signal_date": first_value_as_str(
+                    snapshot_df,
+                    "signal_date",
+                    signal_date,
+                ),
+            }
+
+    return latest_preview_df, {
+        "target_source": "latest_preview",
+        "target_source_detail": "No frozen monthly target snapshot found. Using latest preview file.",
+        "snapshot_path": "",
+        "strategy_name": strategy_name,
+        "rebalance_period": rebalance_period,
+        "signal_date": signal_date,
+    }
 
 
 # ============================================================
@@ -224,6 +327,9 @@ def build_reconciliation(
         "strategy_name",
         "signal_date",
         "rebalance_period",
+        "snapshot_strategy_name",
+        "snapshot_rebalance_period",
+        "snapshot_mode",
     ]
 
     available_cols = [c for c in target_cols if c in proposed_orders_df.columns]
@@ -269,7 +375,9 @@ def build_reconciliation(
 
     merged["abs_reconciled_dollar_delta"] = merged["reconciled_dollar_delta"].abs()
 
-    merged["is_selected_target"] = merged.get("selected", False).fillna(False).astype(bool)
+    merged["is_selected_target"] = (
+        merged.get("selected", False).fillna(False).astype(bool)
+    )
 
     merged["is_dust_position"] = (
         (merged["target_value"].abs() < 1e-9)
@@ -306,6 +414,9 @@ def build_reconciliation(
         "strategy_name",
         "signal_date",
         "rebalance_period",
+        "snapshot_strategy_name",
+        "snapshot_rebalance_period",
+        "snapshot_mode",
     ]
 
     output_cols = [c for c in output_cols if c in merged.columns]
@@ -360,7 +471,7 @@ def summarize_status(
     if len(open_orders_df) > 0:
         status = "NOT SAFE - open Alpaca orders exist"
     elif not meaningful_orders.empty:
-        status = "NOT NEEDED / REVIEW - preview has proposed orders"
+        status = "NOT NEEDED / REVIEW - target has proposed orders"
     elif not needs_attention.empty:
         status = "REVIEW - account drift exceeds threshold"
     else:
@@ -386,6 +497,7 @@ def write_summary_report(
     reconciliation_df: pd.DataFrame,
     open_orders_df: pd.DataFrame,
     proposed_orders_df: pd.DataFrame,
+    target_source_info: Dict[str, object],
 ) -> None:
     lines: List[str] = []
 
@@ -394,6 +506,15 @@ def write_summary_report(
     lines.append(f"Generated at: {datetime.now().isoformat(timespec='seconds')}")
     lines.append(f"Mode: {'PAPER' if PAPER else 'LIVE'}")
     lines.append("")
+
+    lines.append("TARGET SOURCE")
+    lines.append("-" * 80)
+    lines.append(f"Target source: {target_source_info.get('target_source', 'Unknown')}")
+    lines.append(f"Detail: {target_source_info.get('target_source_detail', 'Unknown')}")
+    if target_source_info.get("snapshot_path"):
+        lines.append(f"Snapshot: {target_source_info.get('snapshot_path')}")
+    lines.append("")
+
     lines.append("SUMMARY")
     lines.append("-" * 80)
     lines.append(f"Status: {summary['status']}")
@@ -409,15 +530,23 @@ def write_summary_report(
     lines.append("")
 
     if not proposed_orders_df.empty:
-        strategy_name = proposed_orders_df.get("strategy_name", pd.Series(["Unknown"])).dropna().astype(str)
-        signal_date = proposed_orders_df.get("signal_date", pd.Series(["Unknown"])).dropna().astype(str)
-        rebalance_period = proposed_orders_df.get("rebalance_period", pd.Series(["Unknown"])).dropna().astype(str)
+        strategy_name = first_value_as_str(
+            proposed_orders_df,
+            "snapshot_strategy_name",
+            first_value_as_str(proposed_orders_df, "strategy_name", "Unknown"),
+        )
+        signal_date = first_value_as_str(proposed_orders_df, "signal_date", "Unknown")
+        rebalance_period = first_value_as_str(
+            proposed_orders_df,
+            "snapshot_rebalance_period",
+            first_value_as_str(proposed_orders_df, "rebalance_period", "Unknown"),
+        )
 
-        lines.append("LATEST PREVIEW")
+        lines.append("TARGET METADATA")
         lines.append("-" * 80)
-        lines.append(f"Strategy: {strategy_name.iloc[0] if not strategy_name.empty else 'Unknown'}")
-        lines.append(f"Signal date: {signal_date.iloc[0] if not signal_date.empty else 'Unknown'}")
-        lines.append(f"Rebalance period: {rebalance_period.iloc[0] if not rebalance_period.empty else 'Unknown'}")
+        lines.append(f"Strategy: {strategy_name}")
+        lines.append(f"Signal date: {signal_date}")
+        lines.append(f"Rebalance period: {rebalance_period}")
         lines.append("")
 
     lines.append("OPEN ORDERS")
@@ -475,7 +604,18 @@ def main() -> None:
     account = client.get_account()
     positions_df = get_positions_df(client)
     open_orders_df = get_open_orders_df(client)
-    proposed_orders_df = safe_read_csv(PROPOSED_ORDERS_PATH)
+
+    latest_preview_df = safe_read_csv(PROPOSED_ORDERS_PATH)
+
+    proposed_orders_df, target_source_info = choose_target_dataframe(
+        latest_preview_df=latest_preview_df,
+    )
+
+    print("\n===== TARGET SOURCE =====")
+    print(f"Target source: {target_source_info.get('target_source')}")
+    print(f"Detail: {target_source_info.get('target_source_detail')}")
+    if target_source_info.get("snapshot_path"):
+        print(f"Snapshot: {target_source_info.get('snapshot_path')}")
 
     reconciliation_df = build_reconciliation(
         account_equity=safe_float(getattr(account, "equity", None), 0.0),
@@ -498,6 +638,7 @@ def main() -> None:
         reconciliation_df=reconciliation_df,
         open_orders_df=open_orders_df,
         proposed_orders_df=proposed_orders_df,
+        target_source_info=target_source_info,
     )
 
     print("\n===== SUMMARY =====")
@@ -509,6 +650,7 @@ def main() -> None:
     print(f"Meaningful proposed orders: {summary['meaningful_proposed_order_count']}")
     print(f"Positions needing attention: {summary['needs_attention_count']}")
     print(f"Dust positions: {summary['dust_position_count']}")
+    print(f"Selected target positions: {summary['selected_position_count']}")
 
     print("\n===== RECONCILIATION =====")
 

@@ -86,6 +86,8 @@ ticker_ranking_results/
 trade_log_results/
 universe_overlap_results/
 walkforward_universe_results/
+monthly_target_snapshots/
+alpaca_manual_cleanup_logs/
 
 # Local databases
 *.db
