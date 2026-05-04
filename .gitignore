@@ -94,3 +94,4 @@ alpaca_manual_cleanup_logs/
 *.sqlite
 *.sqlite3
 
+alpaca_manual_cleanup_may2026.py
