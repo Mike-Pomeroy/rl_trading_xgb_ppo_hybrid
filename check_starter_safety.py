@@ -23,8 +23,7 @@ PREVIEW_FILES = [
 
 GENERATED_FOLDERS = [
     "logs",
-    "data_cache",
-    "alpaca_preview_orders_hybrid",
+        "alpaca_preview_orders_hybrid",
     "alpaca_submitted_orders_hybrid",
     "ticker_ranking_results",
     "trade_log_results",
@@ -76,6 +75,16 @@ def main():
             print("  OK      " + file)
         else:
             print("  MISSING " + file)
+
+    print("")
+    print("Tracked model/cache files:")
+    data_cache_tracked = [f for f in tracked if f.startswith("data_cache/")]
+    if data_cache_tracked:
+        print("  INFO    data_cache/ has tracked model cache files")
+        for file in data_cache_tracked:
+            print("          " + file)
+    else:
+        print("  OK      data_cache/ is not tracked")
 
     print("")
     print("Generated output folders should generally stay untracked:")
