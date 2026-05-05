@@ -85,7 +85,7 @@ def show_dataframe(title: str, df: pd.DataFrame, empty_message: str):
     if df.empty:
         st.info(empty_message)
     else:
-        st.dataframe(df, width='stretch')
+        st.dataframe(df, use_container_width=True)
 
 
 def show_text_file(title: str, path: Path, empty_message: str):
@@ -110,7 +110,7 @@ st.title("📈 Trading Starter Dashboard")
 
 st.warning(
     "Read-only dashboard. This app does not submit, cancel, replace, or close orders. "
-    "Use your existing Cursor trading workflow for aual trade submission."
+    "Use your existing Cursor trading workflow for actual trade submission."
 )
 
 trading_mode = get_secret_or_env("TRADING_MODE", "paper")
@@ -165,7 +165,7 @@ for label, path in preview_files.items():
     )
 
 freshness_df = pd.DataFrame(freshness_rows)
-st.dataframe(freshness_df, width='stretch')
+st.dataframe(freshness_df, use_container_width=True)
 
 missing_files = [label for label, path in preview_files.items() if not path.exists()]
 stale_files = [label for label, path in preview_files.items() if is_file_stale(path)]
@@ -216,7 +216,7 @@ show_dataframe(
 
 show_dataframe(
     "Current Positions",
-    current_positions,
+    current_pitions,
     "No current positions file found.",
 )
 
