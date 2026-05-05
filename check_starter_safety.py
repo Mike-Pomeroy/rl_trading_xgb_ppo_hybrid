@@ -6,7 +6,15 @@ REQUIRED_FILES = [
     "streamlit_starter_app.py",
     ".streamlit/secrets.example.toml",
     "README_STREAMLIT_STARTER.md",
+    "FAMILY_FRIEND_SETUP.md",
+    "MONTHLY_WORKFLOW.md",
     ".gitignore",
+]
+
+MODEL_FILES = [
+    "models/xgb_selector.json",
+    "models/vecnormalize_xgb_top4.pkl",
+    "models/ppo_xgb_top4_allocator.zip",
 ]
 
 SENSITIVE_FILES = [
@@ -52,6 +60,18 @@ def main():
     for file in REQUIRED_FILES:
         if Path(file).exists():
             print("  OK      " + file)
+        else:
+            print("  MISSING " + file)
+
+    print("")
+    print("Expected model files:")
+    for file in MODEL_FILES:
+        exists = Path(file).exists()
+        is_tracked = file in tracked
+        if exists and is_tracked:
+            print("  OK      " + file + " exists and is tracked")
+        elif exists and not is_tracked:
+            print("  WARNING " + file + " exists but is not tracked")
         else:
             print("  MISSING " + file)
 
