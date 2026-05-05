@@ -33,6 +33,7 @@ alpaca_submitted_orders/
 alpaca_submitted_orders_hybrid/
 rebalance_guard_logs/
 account_reconciliation_reports/
+alpaca_manual_cleanup_logs/
 
 # Generated research/test outputs
 hybrid_trade_log_results/
@@ -42,6 +43,9 @@ trade_log_results/
 universe_overlap_results/
 walkforward_universe_results/
 ticker_ranking_results/
+rank_decay_results/
+rank_decay_monitor/
+monthly_target_snapshots/
 
 # Generated charts/reports/data exports
 *.png
