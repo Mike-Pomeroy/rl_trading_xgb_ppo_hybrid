@@ -11,3 +11,4 @@ finrl
 gymnasium
 requests
 stable-baselines3
+alpaca-trade-api
