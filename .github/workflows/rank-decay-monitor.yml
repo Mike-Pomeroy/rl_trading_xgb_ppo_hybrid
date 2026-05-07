@@ -1,0 +1,57 @@
+name: Rank Decay Daily Monitor
+
+on:
+  workflow_dispatch:
+
+  # 9:47 AM Eastern during daylight saving time = 13:47 UTC.
+  # Note: During standard time, this will run at 8:47 AM Eastern unless adjusted.
+  schedule:
+    - cron: "47 13 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run rank decay monitor
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+        run: |
+          python -u rank_decay_daily_monitor.py
+
+      - name: Send SMS alert if review needed
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_TO_NUMBER: ${{ secrets.ALERT_TO_NUMBER }}
+          ALERT_ON_WATCH: "false"
+          ALERT_ALWAYS: "true"
+        run: |
+          python -u send_rank_decay_alert.py
+
+      - name: Upload monitor report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rank-decay-monitor-report
+          path: |
+            rank_decay_monitor/
