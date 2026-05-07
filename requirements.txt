@@ -9,3 +9,4 @@ reportlab
 pytz
 finrl
 gymnasium
+requests
