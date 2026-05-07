@@ -1,11 +1,11 @@
 """
-Send short Rank Decay Monitor SMS alert.
+Send short Rank Decay Monitor push notification through Pushover.
 
 Reads:
     rank_decay_monitor/holdings_status.csv
 
 Sends:
-    Very short plain GSM-style SMS.
+    Short Pushover notification.
 
 Does NOT submit orders.
 """
@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-from requests.auth import HTTPBasicAuth
 
 
 MONITOR_DIR = Path("rank_decay_monitor")
 HOLDINGS_STATUS_PATH = MONITOR_DIR / "holdings_status.csv"
+
+PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 
 ALERT_ON_WATCH = os.getenv("ALERT_ON_WATCH", "false").strip().lower() == "true"
 ALERT_ALWAYS = os.getenv("ALERT_ALWAYS", "false").strip().lower() == "true"
@@ -55,7 +56,7 @@ def short_rank(value) -> str:
         return "NA"
 
 
-def build_message() -> str | None:
+def build_message() -> tuple[str, str] | None:
     if not HOLDINGS_STATUS_PATH.exists():
         raise FileNotFoundError(f"Missing required file: {HOLDINGS_STATUS_PATH}")
 
@@ -80,12 +81,15 @@ def build_message() -> str | None:
 
     if not review_df.empty:
         headline = "REVIEW"
+        priority = 1
     elif not watch_df.empty:
         headline = "WATCH"
+        priority = 0
     else:
         headline = "HOLD"
+        priority = 0
 
-    parts = [f"RD {headline}"]
+    parts = []
 
     for _, row in status_df.iterrows():
         symbol = str(row.get("symbol", "")).upper()
@@ -100,57 +104,54 @@ def build_message() -> str | None:
 
         parts.append(f"{symbol} r{rank} d{days} {status}")
 
-    parts.append("NOORDERS")
+    title = f"RankDecay {headline}"
+    message = " | ".join(parts) + " | Read-only. No orders."
 
-    message = " ".join(parts)
-
-    # Hard cap to avoid trial segment issues.
-    if len(message) > 150:
-        message = message[:150]
-
-    return message
+    return title, message, priority
 
 
-def send_sms(message: str) -> None:
-    account_sid = require_env("TWILIO_ACCOUNT_SID")
-    auth_token = require_env("TWILIO_AUTH_TOKEN")
-    from_number = require_env("TWILIO_FROM_NUMBER")
-    to_number = require_env("ALERT_TO_NUMBER")
-
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+def send_pushover(title: str, message: str, priority: int) -> None:
+    api_token = require_env("PUSHOVER_API_TOKEN")
+    user_key = require_env("PUSHOVER_USER_KEY")
 
     response = requests.post(
-        url,
+        PUSHOVER_API_URL,
         data={
-            "From": from_number,
-            "To": to_number,
-            "Body": message,
+            "token": api_token,
+            "user": user_key,
+            "title": title,
+            "message": message,
+            "priority": priority,
         },
-        auth=HTTPBasicAuth(account_sid, auth_token),
         timeout=30,
     )
 
     if response.status_code >= 400:
         raise RuntimeError(
-            f"Twilio SMS failed: status={response.status_code}, body={response.text}"
+            f"Pushover notification failed: status={response.status_code}, body={response.text}"
         )
 
-    print("SMS alert sent successfully.")
+    print("Pushover notification sent successfully.")
 
 
 def main() -> None:
-    print("\n===== SEND RANK DECAY ALERT =====")
+    print("\n===== SEND RANK DECAY PUSHOVER ALERT =====")
 
-    message = build_message()
+    built = build_message()
 
-    if not message:
+    if not built:
         return
 
+    title, message, priority = built
+
+    print("\nAlert title:")
+    print(title)
     print("\nAlert message:")
     print(message)
     print(f"Message length: {len(message)}")
+    print(f"Priority: {priority}")
 
-    send_sms(message)
+    send_pushover(title=title, message=message, priority=priority)
 
 
 if __name__ == "__main__":
