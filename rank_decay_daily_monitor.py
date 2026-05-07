@@ -23,7 +23,7 @@ Research rule:
 Run:
     python -u rank_decay_daily_monitor.py
 """
-
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -124,6 +124,26 @@ def find_latest_snapshot_path() -> Path | None:
 
 
 def load_current_target_holdings() -> Tuple[List[str], str, Path | None]:
+    
+    env_holdings = os.getenv("RANK_DECAY_HOLDINGS", "").strip()
+
+    if env_holdings:
+        holdings = [
+            symbol.strip().upper()
+            for symbol in env_holdings.split(",")
+            if symbol.strip()
+        ]
+
+        if holdings:
+            source = os.getenv(
+                "RANK_DECAY_TARGET_SOURCE",
+                "github_secret_holdings",
+            )
+
+            return holdings, source, None
+    
+    
+    
     snapshot_path = find_latest_snapshot_path()
 
     if snapshot_path is not None:
