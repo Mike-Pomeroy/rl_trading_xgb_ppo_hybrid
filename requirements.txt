@@ -10,3 +10,4 @@ pytz
 finrl
 gymnasium
 requests
+stable-baselines3
