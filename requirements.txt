@@ -13,3 +13,4 @@ requests
 stable-baselines3
 alpaca-trade-api
 exchange_calendars
+stockstats
