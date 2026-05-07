@@ -112,7 +112,7 @@ def build_message() -> tuple[str, str, int] | None:
         rankings_df = pd.read_csv(RANKINGS_PATH)
 
         if not rankings_df.empty:
-            for _, row in rankings_df.head(5).iterrows():
+            for _, row in rankings_df.head(12).iterrows():
                 rank = rank_text(row.get("rank"))
                 ticker = str(row.get("tic", "")).upper()
 
@@ -131,7 +131,7 @@ def build_message() -> tuple[str, str, int] | None:
         f"Status: {headline}\n\n"
         f"Holdings:\n"
         + "\n".join(holding_lines)
-        + "\n\nTop 5 rankings:\n"
+        + "\n\nTop 12 rankings:\n"
         + "\n".join(top_lines)
         + "\n\nRead-only alert. No Alpaca orders submitted."
     )
