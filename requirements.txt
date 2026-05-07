@@ -16,3 +16,4 @@ exchange_calendars
 stockstats
 wrds
 yfinance
+scikit-learn
