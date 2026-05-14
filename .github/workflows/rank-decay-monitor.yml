@@ -6,7 +6,7 @@ on:
   # 9:47 AM Eastern during daylight saving time = 13:47 UTC.
   # Note: During standard time, this will run at 8:47 AM Eastern unless adjusted.
   schedule:
-    - cron: "47 13 * * 1-5"
+    - cron: "47 12 * * 1-5"
 
 permissions:
   contents: read
